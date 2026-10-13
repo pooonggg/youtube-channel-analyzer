@@ -85,6 +85,14 @@
    - ห้ามใส่ชื่อผู้คอมเมนต์ (export ไม่มีให้อยู่แล้ว)
 5. **ปรับเทียบข้ามช่อง**: `python ingest.py ranked` ดูภาพรวม ปรับคะแนนให้สม่ำเสมอ → แก้คะแนนเท่ากัน (tie_rank) → จัดซีรีส์
 6. ตรวจหน้าเว็บ แล้วรายงานผู้ใช้
+7. **อัปเดตเว็บสาธารณะ** (ทำทุกครั้งที่คะแนน/ข้อมูลเปลี่ยน): `python build_site.py` → ตรวจ `docs/index.html` →
+   `git add -A && git commit -m "..." && git push` (นอก sandbox) → GitHub Pages อัปเดตเองใน ~1 นาที
+   - repo: https://github.com/pooonggg/youtube-channel-analyzer (public, บัญชีส่วนตัว `pooonggg` — gh active account ต้องเป็น pooonggg)
+   - เว็บ: https://pooonggg.github.io/youtube-channel-analyzer/
+   - git identity ของ repo นี้ตั้งเป็น pooonggg + noreply email แล้ว (local config) ห้ามใช้บัญชีงาน pongsakornc-be8
+   - ห้ามใส่ Co-Authored-By ใน commit; ห้าม commit `data/` หรือ `.streamlit/secrets.toml`
+   - หน้าเว็บสาธารณะ (`site_template.html`) เป็น HTML ไฟล์เดียว อ่านข้อมูลที่ฝังมา; สถานะของผู้ชมเก็บใน localStorage ของเบราว์เซอร์
+     ส่วนหน้า Streamlit (`app.py`) ใช้ในเครื่อง สถานะเก็บใน DB — สองที่นี้ไม่ sync กัน
 
 ## ประหยัดโทเค็นและอ่านข้อมูลให้ฉลาด
 
