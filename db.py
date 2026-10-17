@@ -223,10 +223,10 @@ WHERE v.duplicate_of IS NULL
 # videos >10h on 2026-10-13: median ~14K at <=3 days, ~40K at 2-6 weeks, ~76-87K at 2-4 months),
 # so young videos with a good pace are kept as "potential" instead of being cut by a flat 50K.
 MIN_DURATION_SECONDS = 10 * 3600
-MIN_VIEWS = 50_000
+MIN_VIEWS = 40_000  # was 50_000 until 2026-10-17 (user asked for a slight easing: +11 clips)
 RAMP_DAYS = 60
 _AGE_DAYS = "MAX(0.5, julianday('now') - julianday(v.published_at))"
-# views > 50K*sqrt(r)  <=>  views^2 > 50K^2 * r   (SQLite has no sqrt by default)
+# views > MIN_VIEWS*sqrt(r)  <=>  views^2 > MIN_VIEWS^2 * r   (SQLite has no sqrt by default)
 ELIGIBLE_SQL = (f"v.duplicate_of IS NULL AND v.duration_seconds > {MIN_DURATION_SECONDS} "
                 f"AND 1.0 * COALESCE(v.view_count, 0) * COALESCE(v.view_count, 0) > "
                 f"{MIN_VIEWS}.0 * {MIN_VIEWS} * MIN(1.0, {_AGE_DAYS} / {RAMP_DAYS})")
