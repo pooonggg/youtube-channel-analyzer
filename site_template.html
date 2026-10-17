@@ -83,10 +83,11 @@ footer { margin-top: 48px; color: #777; font-size: 12.5px; line-height: 1.6; }
   </div>
   <div class="chips" id="statusChips" aria-label="กรองตามสถานะ"></div>
   <div class="chips" id="channelChips" aria-label="กรองตามช่อง"></div>
+  <div class="chips"><button type="button" class="chip" id="copyLink">🔗 คัดลอกลิงก์สถานะ (เปิดในเครื่องอื่นแล้วสถานะตามไปด้วย)</button><span id="syncMsg" role="status"></span></div>
   <div class="count" id="count"></div>
   <main class="grid" id="grid"></main>
   <footer>
-    คะแนนและเหตุผลสรุปโดย Claude จากคอมเมนต์ของผู้ชม · สถานะ ดูแล้ว / สนใจ / ไม่สนใจ บันทึกไว้ในเบราว์เซอร์นี้เท่านั้น<br>
+    คะแนนและเหตุผลสรุปโดย Claude จากคอมเมนต์ของผู้ชม · สถานะ ดูแล้ว / สนใจ / ไม่สนใจ บันทึกไว้ในเบราว์เซอร์นี้ ย้ายเครื่องได้ด้วยปุ่ม "คัดลอกลิงก์สถานะ"<br>
     ข้อมูลจาก YouTube Data API · <span id="gen"></span>
   </footer>
 </div>
@@ -109,7 +110,27 @@ const store = {
   get() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } },
   set(map) { try { localStorage.setItem(KEY, JSON.stringify(map)); } catch {} },
 };
-let statusMap = store.get();
+const CODE = { watched: "w", interested: "i", not_interested: "n" };
+const DECODE = { w: "watched", i: "interested", n: "not_interested" };
+// เครื่องที่ยังไม่เคยกดอะไร เริ่มจากสถานะตั้งต้นที่ฝังมากับหน้าเว็บ (ส่งออกจาก DB ตอน build)
+const hasSaved = (() => { try { return localStorage.getItem(KEY) !== null; } catch { return true; } })();
+let statusMap = hasSaved ? store.get() : { ...(DATA.baseline || {}) };
+function syncMsg(t) { const m = document.getElementById("syncMsg"); m.textContent = t; setTimeout(() => { m.textContent = ""; }, 6000); }
+// ลิงก์ที่ติดสถานะมา (#s=id.w~id.i) = สถานะล่าสุดจากอีกเครื่อง แทนที่ของเครื่องนี้ทั้งหมด
+const fromHash = new URLSearchParams(location.hash.slice(1)).get("s");
+if (fromHash !== null) {
+  const m = {};
+  for (const p of fromHash.split("~")) { const [id, c] = p.split("."); if (id && DECODE[c]) m[id] = DECODE[c]; }
+  statusMap = m; store.set(statusMap);
+  history.replaceState(null, "", location.pathname + location.search);
+  setTimeout(() => syncMsg(`นำเข้าสถานะจากลิงก์ ${Object.keys(m).length} คลิปแล้ว`), 0);
+}
+document.getElementById("copyLink").onclick = async () => {
+  const enc = Object.entries(statusMap).filter(([, k]) => CODE[k]).map(([id, k]) => `${id}.${CODE[k]}`).join("~");
+  const url = location.origin + location.pathname + location.search + "#s=" + enc;
+  try { await navigator.clipboard.writeText(url); syncMsg("คัดลอกลิงก์แล้ว เปิดลิงก์นี้ในเครื่องอื่นได้เลย"); }
+  catch { prompt("คัดลอกลิงก์นี้ไปเปิดในเครื่องอื่น", url); }
+};
 const state = { q: "", s1: "rank", s2: "", statuses: new Set(["none", "interested", "watched"]), channels: new Set() };
 
 const now = Date.now();

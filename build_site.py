@@ -70,7 +70,11 @@ def load_videos() -> list[dict]:
 
 def main() -> None:
     videos = load_videos()
-    data = {"generatedAt": datetime.now(timezone.utc).isoformat(timespec="minutes"), "videos": videos}
+    con = db.connect()
+    baseline = {r["video_id"]: r["status"] for r in con.execute("SELECT video_id, status FROM user_status")}
+    con.close()
+    data = {"generatedAt": datetime.now(timezone.utc).isoformat(timespec="minutes"), "videos": videos,
+            "baseline": baseline}
     page = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     OUT.parent.mkdir(exist_ok=True)

@@ -4,7 +4,9 @@
                                        all new videos of a channel; comments only for eligible ones
   python ingest.py video <url>         one video + its channel + all comments
   python ingest.py comments            fetch comments for eligible videos that have none yet
-  python ingest.py refresh             update views/likes only for videos marked interested/watched
+  python ingest.py refresh [--all]     update views/likes for videos marked interested/watched;
+                                       --all = every non-duplicate clip (~13 units per 600 clips)
+  python ingest.py import-status <file.json>   {"video_id": "watched|interested|not_interested"} -> user_status
   python ingest.py stats               per-channel summary + estimated quota for missing comments
   python ingest.py export-scoring [--channel TEXT] [--limit N] [--ids a,b] [--all]
                                        compact unscored videos + deduplicated comments for Claude
@@ -189,14 +191,33 @@ def ingest_channel(con, yt, url: str, max_videos: int = 5000, recheck_comments: 
     return [v["video_id"] for v in videos]
 
 
-def refresh_stats(con, yt, statuses: list[str], log=print) -> int:
-    marks = ",".join("?" * len(statuses))
-    ids = [r["video_id"] for r in con.execute(
-        f"SELECT video_id FROM user_status WHERE status IN ({marks})", statuses)]
+def _eligible_ids(con) -> set[str]:
+    return {r["video_id"] for r in con.execute(f"SELECT v.video_id FROM videos v WHERE {db.ELIGIBLE_SQL}")}
+
+
+def refresh_stats(con, yt, statuses: list[str], log=print, all_videos: bool = False) -> int:
+    """Update views/likes/comment counts. videos.list costs 1 unit per 50 clips, so refreshing
+    every known clip (all_videos) is ~13 units for 600 clips — cheap, and it is the only way to
+    notice a young clip that has just grown past the view threshold."""
+    if all_videos:
+        ids = [r["video_id"] for r in con.execute("SELECT video_id FROM videos WHERE duplicate_of IS NULL")]
+    else:
+        marks = ",".join("?" * len(statuses))
+        ids = [r["video_id"] for r in con.execute(
+            f"SELECT video_id FROM user_status WHERE status IN ({marks})", statuses)]
+    before = _eligible_ids(con)
     rows = yt_api.fetch_videos(yt, ids)
     db.upsert_videos(con, rows)
     con.commit()
     log(f"อัปเดตยอดวิว/ไลก์ {len(rows)} คลิป")
+    if all_videos:
+        after = _eligible_ids(con)
+        scored = {r["video_id"] for r in con.execute("SELECT video_id FROM scores")}
+        new = sorted(after - before)
+        log(f"เข้าเกณฑ์ใหม่ {len(new)} คลิป (ต้องดึงคอมเมนต์+ให้คะแนน: {len([i for i in new if i not in scored])}) · "
+            f"หลุดเกณฑ์ {len(before - after)} คลิป")
+        for i in new:
+            log(f"  + {i}")
     return len(rows)
 
 
@@ -252,7 +273,7 @@ _PRAISE = re.compile(r"สนุก|ชอบ|ดี|มันส์|มัน|�
 SHORT_LEN = 30
 
 
-def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_replies: int = 2,
+def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_replies: int = 3,
                      max_long: int = 50) -> tuple[list[str], int]:
     """Token-lean view of a video's comments for scoring. Author names are never included.
 
@@ -261,7 +282,8 @@ def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_rep
     - short (<=30 chars), low-like comments that only praise or ask for a sequel become counts;
       short comments with complaint words are always kept verbatim
     - longer comments: top 50 by likes, plus every remaining one that contains a complaint word
-    - replies: at most 2 per thread, only under threads with 3+ likes
+    - replies: at most 3 per thread (most-liked first, shown as ↳[likes]), under threads with 3+ likes,
+      a complaint word, or 2+ replies
     """
     tops: OrderedDict[str, dict] = OrderedDict()
     replies: dict[str, list[str]] = {}
@@ -272,7 +294,7 @@ def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_rep
             noise += 1
             continue
         if r["parent_id"]:
-            replies.setdefault(r["parent_id"], []).append(text[:max_reply_len])
+            replies.setdefault(r["parent_id"], []).append((r["like_count"] or 0, text[:max_reply_len]))
             continue
         key = text.lower()
         g = tops.setdefault(key, {"text": text, "n": 0, "likes": 0, "ids": []})
@@ -303,14 +325,16 @@ def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_rep
     for g in kept:
         dup = f" ×{g['n']}" if g["n"] > 1 else ""
         lines.append(f"- [{g['likes']}] {g['text'][:max_len]}{dup}")
-        if g["likes"] < 3:
+        reps = sorted((x for cid in g["ids"] for x in replies.get(cid, [])), key=lambda x: -x[0])
+        # replies show how the crowd reacted (agreed / pushed back): keep them under popular threads,
+        # under complaints, and under threads that drew 2+ replies
+        if not reps or not (g["likes"] >= 3 or _NEG.search(g["text"]) or len(reps) >= 2):
             continue
-        seen: list[str] = []
-        for cid in g["ids"]:
-            for rep in replies.get(cid, []):
-                if rep.lower() not in seen and len(seen) < max_replies:
-                    seen.append(rep.lower())
-                    lines.append(f"  ↳ {rep}")
+        seen: set[str] = set()
+        for rl, rep in reps:
+            if rep.lower() not in seen and len(seen) < max_replies:
+                seen.add(rep.lower())
+                lines.append(f"  ↳[{rl}] {rep}")
     if len(kept) < len(ranked):
         lines.append(f"(+{len(ranked) - len(kept)} more neutral/positive longer comments omitted)")
     lines.append(f"short: praise={praise} sequel_request={sequel}"
@@ -394,6 +418,8 @@ def main() -> int:
     s.add_argument("--no-comments", action="store_true")
     sub.add_parser("comments")
     s = sub.add_parser("refresh"); s.add_argument("--status", default="interested,watched")
+    s.add_argument("--all", action="store_true")
+    s = sub.add_parser("import-status"); s.add_argument("file", type=Path)
     sub.add_parser("stats")
     s = sub.add_parser("export-scoring")
     s.add_argument("--channel"); s.add_argument("--limit", type=int); s.add_argument("--ids")
@@ -428,6 +454,14 @@ def main() -> int:
         con.commit()
         print(f"จัดกลุ่ม {len(groups)} เรื่อง")
         return 0
+    if args.cmd == "import-status":
+        m = json.loads(args.file.read_text(encoding="utf-8"))
+        known = {r["video_id"] for r in con.execute("SELECT video_id FROM videos")}
+        ok = {k: v for k, v in m.items() if k in known and v in ("watched", "interested", "not_interested")}
+        for vid, st in ok.items():
+            db.set_status(con, vid, st)
+        print(f"นำเข้าสถานะ {len(ok)} คลิป (ข้าม {len(m) - len(ok)})")
+        return 0
     if args.cmd == "stats":
         print_stats(con)
         return 0
@@ -450,7 +484,7 @@ def main() -> int:
             print(f"คลิปเข้าเกณฑ์ที่ยังไม่มีคอมเมนต์: {len(ids)}")
             _fetch_comments_into(con, yt, ids, print)
         elif args.cmd == "refresh":
-            refresh_stats(con, yt, args.status.split(","))
+            refresh_stats(con, yt, args.status.split(","), all_videos=args.all)
     except HttpError as e:
         print(yt_api.error_message_th(e), file=sys.stderr)
         return 1
