@@ -96,6 +96,7 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 MIGRATIONS = {
     "videos": {"duplicate_of": "TEXT"},
+    "channels": {"source_url": "TEXT"},
     "scores": {"tie_rank": "INTEGER", "series": "TEXT", "series_order": "INTEGER"},
 }
 
@@ -110,12 +111,12 @@ def _migrate(con) -> None:
 
 def upsert_channel(con, row: dict) -> None:
     con.execute(
-        """INSERT INTO channels (channel_id, title, handle, url, thumbnail_url, uploads_playlist, last_fetched_at)
-           VALUES (:channel_id, :title, :handle, :url, :thumbnail_url, :uploads_playlist, :last_fetched_at)
+        """INSERT INTO channels (channel_id, title, handle, url, source_url, thumbnail_url, uploads_playlist, last_fetched_at)
+           VALUES (:channel_id, :title, :handle, :url, :source_url, :thumbnail_url, :uploads_playlist, :last_fetched_at)
            ON CONFLICT(channel_id) DO UPDATE SET title=excluded.title, handle=excluded.handle,
-             url=excluded.url, thumbnail_url=excluded.thumbnail_url,
+             url=excluded.url, source_url=COALESCE(excluded.source_url, source_url), thumbnail_url=excluded.thumbnail_url,
              uploads_playlist=excluded.uploads_playlist, last_fetched_at=excluded.last_fetched_at""",
-        row,
+        {"source_url": None, **row},
     )
 
 

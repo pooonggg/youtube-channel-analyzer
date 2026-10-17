@@ -122,16 +122,23 @@
 - ไม่มีค่าใช้จ่าย: เกินโควตาแค่โดนปฏิเสธ (`quotaExceeded`) ไม่ถูกเก็บเงิน
 - ดึงช่องซ้ำ: หยุดเมื่อเจอคลิปที่มีอยู่แล้ว · คอมเมนต์ดึงครั้งเดียว (`--recheck-comments` เมื่ออยากอัปเดต) · `refresh` อัปเดตยอดวิวเฉพาะคลิปที่ผู้ใช้กดสนใจ/ดูแล้ว
 
-## ช่องที่อยู่ในคลัง
+## ช่องที่อยู่ในคลัง (ลิงก์ที่ผู้ใช้ให้ไว้เก็บใน `channels.source_url` ของ DB แล้ว)
 
 - Brahim amigo — https://www.youtube.com/@Brahimamigo-e6h
 - MinMinReview — https://www.youtube.com/@MinMinReview-o9q
 - ZenAnime — https://www.youtube.com/@ZenAnime-p9r
 - KeenaKaw — https://www.youtube.com/@KeenaKaw
 - QuietKage — https://www.youtube.com/@QuietKage
+- DynastyTV — https://www.youtube.com/@DynastyTV36
+- Yaakdoo Drama TH — https://www.youtube.com/@YaakdooDrama
+- นู๋เม๋ารีวิว — https://www.youtube.com/channel/UCgFu07GQ-4esM31OwbLbHiA (handle ไทยมีวรรณยุกต์ ใช้ลิงก์ channel แทน)
+- นู๋เม๋าซีเนม่า — https://www.youtube.com/channel/UCAy8TgeOivJOb-8ju0UTQww
+- TheRipperReview — https://www.youtube.com/@TheRipperReview
+- Shermine Baraniak — https://www.youtube.com/@ShermineBaraniak
 
-## สถานะล่าสุด (2026-10-13)
+## สถานะล่าสุด (2026-10-17)
 
-- ดึงครบ 5 ช่อง 607 คลิป เข้าเกณฑ์ 63 คลิป ให้คะแนนครบ 63 + tie_rank ครบ + จัด 10 กลุ่มเรื่องเดียวกัน (`data/scores/*.json` คือต้นฉบับคะแนน)
-- โควตาที่ใช้วันแรก ≈ 150 units (ข้อมูลคลิปทั้งช่อง ~5–9 units/ช่อง, คอมเมนต์ 63 คลิป ~110 units)
-- gcloud ของเครื่องนี้ต้อง re-login จึงยังเช็คโควตาจาก Google ตรงๆ ไม่ได้ → ใช้ `quota_log` (นับทุก request ที่โค้ดยิง)
+- 11 ช่อง · เข้าเกณฑ์ 72 คลิป (หลัง `refresh --all`) ให้คะแนนครบ · ช่องใหม่ 6 ช่อง (17 ต.ค.) ได้คลิปเข้าเกณฑ์ 11 คลิป (Shermine 8, นู๋เม๋ารีวิว 3) · DynastyTV / Yaakdoo / นู๋เม๋าซีเนม่า / TheRipperReview ยังไม่มีคลิปเข้าเกณฑ์
+- เกณฑ์ตามอายุคลิปทำให้คลิปใหม่ที่ยอดวิวยังไม่ถึงจะเข้าทีหลัง → รัน `refresh --all` เป็นระยะ แล้วดูบรรทัด "เข้าเกณฑ์ใหม่" เพื่อดึงคอมเมนต์+ให้คะแนนเฉพาะคลิปที่ยังไม่มีคะแนน
+- ซิงก์สถานะอัตโนมัติผ่านโทเคน GitHub ถูกระบบความปลอดภัยบล็อก (ไม่ได้ทำ) — ใช้ลิงก์สถานะ + `baseline` ที่ฝังตอน build · ถ้าผู้ใช้ต้องการซิงก์อัตโนมัติ ต้องให้ผู้ใช้ตัดสินใจเองก่อน
+- ตัวเลขโควตาวันที่ 17 ต.ค.: ใช้ ~85 units (refresh 13 + ช่องใหม่ 28 + คอมเมนต์ 22 + ...)

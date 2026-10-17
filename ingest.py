@@ -53,13 +53,16 @@ def load_api_key() -> str:
     return ""
 
 
-def _channel_row(ch: dict) -> dict:
+def _channel_row(ch: dict, source_url: str | None = None) -> dict:
     handle = ch["snippet"].get("customUrl")
+    if handle and not handle.isascii():  # YouTube drops Thai tone marks in customUrl -> link would not open
+        handle = None
     return {
         "channel_id": ch["id"],
         "title": ch["snippet"]["title"],
         "handle": handle,
         "url": f"https://www.youtube.com/{handle}" if handle else f"https://www.youtube.com/channel/{ch['id']}",
+        "source_url": source_url,
         "thumbnail_url": yt_api.best_thumb(ch["snippet"].get("thumbnails", {})),
         "uploads_playlist": ch["contentDetails"]["relatedPlaylists"]["uploads"],
         "last_fetched_at": db.now_iso(),
@@ -162,7 +165,7 @@ def ingest_channel(con, yt, url: str, max_videos: int = 5000, recheck_comments: 
     ch = yt_api.fetch_channel(yt, url)
     if not ch:
         raise ValueError(yt_api.ERROR_TH["channelNotFound"])
-    row = _channel_row(ch)
+    row = _channel_row(ch, url.strip())
     db.upsert_channel(con, row)
     known = {r["video_id"] for r in con.execute(
         "SELECT video_id FROM videos WHERE channel_id = ?", (ch["id"],))}
