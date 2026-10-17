@@ -83,11 +83,11 @@ footer { margin-top: 48px; color: #777; font-size: 12.5px; line-height: 1.6; }
   </div>
   <div class="chips" id="statusChips" aria-label="กรองตามสถานะ"></div>
   <div class="chips" id="channelChips" aria-label="กรองตามช่อง"></div>
-  <div class="chips"><button type="button" class="chip" id="setToken">☁️ ตั้งค่าซิงก์อัตโนมัติ</button><button type="button" class="chip" id="copyLink">🔗 คัดลอกลิงก์สถานะ (เปิดในเครื่องอื่นแล้วสถานะตามไปด้วย)</button><span id="syncMsg" role="status"></span></div>
+  <div class="chips"><button type="button" class="chip" id="setToken">☁️ ตั้งค่าซิงก์อัตโนมัติ</button><button type="button" class="chip" id="copyLink">🔗 คัดลอกลิงก์ส่วนตัวสำหรับเครื่องอื่น</button><span id="syncMsg" role="status"></span></div>
   <div class="count" id="count"></div>
   <main class="grid" id="grid"></main>
   <footer>
-    คะแนนและเหตุผลสรุปโดย Claude จากคอมเมนต์ของผู้ชม · สถานะ ดูแล้ว / สนใจ / ไม่สนใจ บันทึกไว้ในเบราว์เซอร์นี้ ย้ายเครื่องได้ด้วยปุ่ม "คัดลอกลิงก์สถานะ"<br>
+    คะแนนและเหตุผลสรุปโดย Claude จากคอมเมนต์ของผู้ชม · สถานะ ดูแล้ว / สนใจ / ไม่สนใจ บันทึกไว้ในเบราว์เซอร์นี้ ซิงก์ข้ามเครื่องอัตโนมัติเมื่อเปิดซิงก์<br>
     ข้อมูลจาก YouTube Data API · <span id="gen"></span>
   </footer>
 </div>
@@ -126,34 +126,40 @@ if (fromHash !== null) {
   setTimeout(() => syncMsg(`นำเข้าสถานะจากลิงก์ ${Object.keys(m).length} คลิปแล้ว`), 0);
 }
 document.getElementById("copyLink").onclick = async () => {
+  const key = (() => { try { return localStorage.getItem("yt-library-sync-key"); } catch { return null; } })();
   const enc = Object.entries(statusMap).filter(([, k]) => CODE[k]).map(([id, k]) => `${id}.${CODE[k]}`).join("~");
-  const url = location.origin + location.pathname + location.search + "#s=" + enc;
-  try { await navigator.clipboard.writeText(url); syncMsg("คัดลอกลิงก์แล้ว เปิดลิงก์นี้ในเครื่องอื่นได้เลย"); }
+  const base = location.origin + location.pathname + location.search;
+  const url = key ? base + "#k=" + key : base + "#s=" + enc;   // มีรหัสซิงก์ = ลิงก์เปิดซิงก์ให้เครื่องอื่น · ไม่มี = ลิงก์ย้ายสถานะครั้งเดียว
+  try { await navigator.clipboard.writeText(url); syncMsg(key ? "คัดลอกลิงก์ส่วนตัวแล้ว (อย่าแชร์ให้คนอื่น) เปิดในเครื่องอื่นครั้งเดียวก็ซิงก์อัตโนมัติ" : "คัดลอกลิงก์แล้ว เปิดลิงก์นี้ในเครื่องอื่นได้เลย"); }
   catch { prompt("คัดลอกลิงก์นี้ไปเปิดในเครื่องอื่น", url); }
 };
-// ---- ซิงก์สถานะข้ามเครื่องอัตโนมัติ: เก็บเป็นไฟล์ status.json ใน repo เดียวกันนี้ (repo ของเจ้าของเว็บเอง ไม่มีบริการภายนอก)
-// อ่านได้ทุกเครื่องโดยไม่ต้องตั้งค่า · เขียนต้องวางโทเคน GitHub (สิทธิ์ Contents อย่างเดียว เฉพาะ repo นี้) ครั้งเดียวต่อเครื่อง
-const SYNC = { api: "https://api.github.com/repos/pooonggg/youtube-channel-analyzer/contents/status.json", branch: "main" };
-const TS_KEY = "yt-library-status-ts-v1", TOKEN_KEY = "yt-library-gh-token";
+// ---- ซิงก์สถานะข้ามเครื่องอัตโนมัติ: เก็บในระบบหลังบ้านของเจ้าของเว็บเอง (Cloudflare Worker + KV ฟรี)
+// อ่านได้ทุกเครื่องโดยไม่ต้องตั้งค่า · เขียนต้องมี "รหัสซิงก์" ซึ่งใส่ครั้งเดียวต่อเครื่องด้วยการเปิดลิงก์ส่วนตัว (#k=รหัส)
+const SYNC = { url: "https://yt-library-status.ytlib-765e3f.workers.dev/status" };
+const TS_KEY = "yt-library-status-ts-v1", SYNC_KEY = "yt-library-sync-key";
 const ls = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
   del(k) { try { localStorage.removeItem(k); } catch {} },
 };
+const hashParams = new URLSearchParams(location.hash.slice(1));
+if (hashParams.get("k")) {            // เปิดลิงก์ส่วนตัวครั้งแรกบนเครื่องนี้ -> จำรหัสไว้แล้วลบออกจากแถบที่อยู่
+  ls.set(SYNC_KEY, hashParams.get("k").trim());
+  hashParams.delete("k");
+  const rest = hashParams.toString();
+  history.replaceState(null, "", location.pathname + location.search + (rest ? "#" + rest : ""));
+  setTimeout(() => syncMsg("เปิดซิงก์อัตโนมัติบนเครื่องนี้แล้ว"), 0);
+}
 let tsMap = (() => { try { return JSON.parse(ls.get(TS_KEY)) || {}; } catch { return {}; } })();
 let pushTimer = null, syncing = false;
 function saveTs() { ls.set(TS_KEY, JSON.stringify(tsMap)); }
 function touch(id) { tsMap[id] = Date.now(); saveTs(); schedulePush(); }
-function ghHeaders() {
-  const t = ls.get(TOKEN_KEY);
-  return { Accept: "application/vnd.github+json", ...(t ? { Authorization: "Bearer " + t } : {}) };
-}
+function syncOn() { return !!ls.get(SYNC_KEY); }
+function renderSyncBtn() { document.getElementById("setToken").textContent = syncOn() ? "☁️ ซิงก์อัตโนมัติ: เปิดอยู่" : "☁️ ซิงก์อัตโนมัติ: ยังไม่เปิดในเครื่องนี้"; }
 async function fetchRemote() {
-  const r = await fetch(`${SYNC.api}?ref=${SYNC.branch}&_=${Date.now()}`, { headers: ghHeaders(), cache: "no-store" });
-  if (r.status === 404) return { items: {}, sha: null };
+  const r = await fetch(SYNC.url + "?_=" + Date.now(), { cache: "no-store" });
   if (!r.ok) throw new Error("อ่านไม่ได้ (" + r.status + ")");
-  const j = await r.json();
-  return { items: JSON.parse(atob(j.content.replace(/\s/g, ""))).items || {}, sha: j.sha };
+  return (await r.json()).items || {};
 }
 // รวมต่อคลิป: เวลาที่กดล่าสุดชนะ · เวลาเท่ากัน (เช่น ค่าตั้งต้นที่ไม่มีเวลา) ให้ยึดค่าในเครื่องที่มีสถานะอยู่
 function mergeRemote(items) {
@@ -173,50 +179,43 @@ function mergeRemote(items) {
 }
 async function pull() {
   try {
-    const { items } = await fetchRemote();
-    const { changed, differs } = mergeRemote(items);
+    const { changed, differs } = mergeRemote(await fetchRemote());
     store.set(statusMap); saveTs();
     if (changed) render();
-    if (differs) schedulePush(); else if (ls.get(TOKEN_KEY)) syncMsg("☁️ ซิงก์แล้ว");
+    if (differs) schedulePush(); else if (syncOn()) syncMsg("☁️ ซิงก์แล้ว");
   } catch (e) { syncMsg("ซิงก์ไม่ได้ ใช้ค่าในเครื่องนี้ไปก่อน (" + e.message + ")"); }
 }
 function schedulePush() {
-  if (!ls.get(TOKEN_KEY)) { syncMsg("บันทึกในเครื่องนี้แล้ว · ยังไม่ได้ตั้งค่าซิงก์ เครื่องอื่นจึงยังไม่เห็น"); return; }
-  clearTimeout(pushTimer); pushTimer = setTimeout(() => push(true), 1200);
+  if (!syncOn()) { syncMsg("บันทึกในเครื่องนี้แล้ว · เครื่องนี้ยังไม่ได้เปิดซิงก์ เครื่องอื่นจึงยังไม่เห็น"); return; }
+  clearTimeout(pushTimer); pushTimer = setTimeout(push, 1000);
 }
-async function push(retry) {
-  if (syncing) { clearTimeout(pushTimer); pushTimer = setTimeout(() => push(retry), 800); return; }
+async function push() {
+  if (syncing) { clearTimeout(pushTimer); pushTimer = setTimeout(push, 800); return; }
   syncing = true;
   try {
-    const { items, sha } = await fetchRemote();
-    const { changed } = mergeRemote(items);
-    if (changed) { store.set(statusMap); saveTs(); render(); }
     const out = {};
     for (const id of new Set([...Object.keys(statusMap), ...Object.keys(tsMap)])) {
       if (statusMap[id] || tsMap[id]) out[id] = { s: statusMap[id] ?? null, t: tsMap[id] || 1 };
     }
-    const r = await fetch(SYNC.api, {
-      method: "PUT", headers: { ...ghHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Update viewer status", branch: SYNC.branch, ...(sha ? { sha } : {}),
-        content: btoa(JSON.stringify({ v: 1, items: out })) }),
-    });
-    if ((r.status === 409 || r.status === 422) && retry) { syncing = false; return push(false); }
-    if (r.status === 401 || r.status === 403) throw new Error("โทเคนใช้ไม่ได้ หมดอายุ หรือไม่มีสิทธิ์เขียน repo นี้");
+    const r = await fetch(SYNC.url, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: "Bearer " + ls.get(SYNC_KEY) },
+      body: JSON.stringify({ items: out }) });
+    if (r.status === 401) throw new Error("รหัสซิงก์ไม่ถูกต้อง เปิดลิงก์ส่วนตัวใหม่อีกครั้ง");
     if (!r.ok) throw new Error("เขียนไม่ได้ (" + r.status + ")");
     for (const id of Object.keys(out)) if (!tsMap[id]) tsMap[id] = 1;
-    saveTs(); syncMsg("☁️ ซิงก์แล้ว");
+    const { changed } = mergeRemote((await r.json()).items || {});   // เซิร์ฟเวอร์รวมให้แล้ว: รับของเครื่องอื่นที่ใหม่กว่ากลับมา
+    store.set(statusMap); saveTs(); if (changed) render();
+    syncMsg("☁️ ซิงก์แล้ว");
   } catch (e) { syncMsg("ซิงก์ไม่สำเร็จ: " + e.message); }
   syncing = false;
 }
 document.getElementById("setToken").onclick = () => {
-  const has = !!ls.get(TOKEN_KEY);
-  const t = prompt("วางโทเคน GitHub (fine-grained token เฉพาะ repo youtube-channel-analyzer สิทธิ์ Contents: Read and write)" +
-    (has ? "\n\nเครื่องนี้มีโทเคนอยู่แล้ว วางอันใหม่เพื่อเปลี่ยน หรือเว้นว่างแล้วกดตกลงเพื่อลบ" : ""));
+  const t = prompt("วางรหัสซิงก์ (หรือเปิดลิงก์ส่วนตัวแทนก็ได้)\nเว้นว่างแล้วกดตกลง = ปิดซิงก์บนเครื่องนี้" );
   if (t === null) return;
-  if (t.trim()) { ls.set(TOKEN_KEY, t.trim()); syncMsg("เก็บโทเคนในเบราว์เซอร์นี้แล้ว กำลังซิงก์…"); push(true); }
-  else { ls.del(TOKEN_KEY); syncMsg("ลบโทเคนออกจากเครื่องนี้แล้ว"); }
+  if (t.trim()) { ls.set(SYNC_KEY, t.trim()); renderSyncBtn(); syncMsg("เปิดซิงก์แล้ว กำลังซิงก์…"); push(); }
+  else { ls.del(SYNC_KEY); renderSyncBtn(); syncMsg("ปิดซิงก์บนเครื่องนี้แล้ว"); }
 };
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pull(); });
+renderSyncBtn();
 setTimeout(pull, 0);
 
 const state = { q: "", s1: "rank", s2: "", statuses: new Set(["none", "interested", "watched"]), channels: new Set() };

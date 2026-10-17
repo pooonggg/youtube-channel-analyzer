@@ -7,6 +7,7 @@
   python ingest.py refresh [--all]     update views/likes for videos marked interested/watched;
                                        --all = every non-duplicate clip (~13 units per 600 clips)
   python ingest.py import-status <file.json>   {"video_id": "watched|interested|not_interested"} -> user_status
+  python ingest.py pull-status         copy the statuses saved by the website (Cloudflare Worker) into user_status
   python ingest.py stats               per-channel summary + estimated quota for missing comments
   python ingest.py export-scoring [--channel TEXT] [--limit N] [--ids a,b] [--all]
                                        compact unscored videos + deduplicated comments for Claude
@@ -411,6 +412,9 @@ def import_scores(con, path: Path) -> int:
     return len(items)
 
 
+SYNC_URL = "https://yt-library-status.ytlib-765e3f.workers.dev/status"
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -423,6 +427,7 @@ def main() -> int:
     s = sub.add_parser("refresh"); s.add_argument("--status", default="interested,watched")
     s.add_argument("--all", action="store_true")
     s = sub.add_parser("import-status"); s.add_argument("file", type=Path)
+    sub.add_parser("pull-status")
     sub.add_parser("stats")
     s = sub.add_parser("export-scoring")
     s.add_argument("--channel"); s.add_argument("--limit", type=int); s.add_argument("--ids")
@@ -457,8 +462,13 @@ def main() -> int:
         con.commit()
         print(f"จัดกลุ่ม {len(groups)} เรื่อง")
         return 0
-    if args.cmd == "import-status":
-        m = json.loads(args.file.read_text(encoding="utf-8"))
+    if args.cmd in ("import-status", "pull-status"):
+        if args.cmd == "pull-status":   # statuses the website saved to its Cloudflare Worker (public read)
+            import urllib.request
+            req = urllib.request.Request(SYNC_URL, headers={"User-Agent": "yt-library-sync/1.0"})
+            m = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+        else:
+            m = json.loads(args.file.read_text(encoding="utf-8"))
         if "items" in m:  # status.json written by the website: {"items": {id: {"s": status|null, "t": ms}}}
             m = {k: v.get("s") for k, v in m["items"].items()}
         known = {r["video_id"] for r in con.execute("SELECT video_id FROM videos")}

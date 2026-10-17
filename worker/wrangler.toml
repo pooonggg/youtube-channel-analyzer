@@ -1,0 +1,12 @@
+name = "yt-library-status"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+preview_urls = false
+
+# KV namespace id is filled in by `wrangler kv namespace create STATUS`
+
+[[kv_namespaces]]
+binding = "STATUS"
+id = "1d18c53e29554d2a992169c96fe04566"
+
