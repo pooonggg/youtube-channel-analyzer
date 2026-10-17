@@ -83,7 +83,7 @@ footer { margin-top: 48px; color: #777; font-size: 12.5px; line-height: 1.6; }
   </div>
   <div class="chips" id="statusChips" aria-label="กรองตามสถานะ"></div>
   <div class="chips" id="channelChips" aria-label="กรองตามช่อง"></div>
-  <div class="chips"><button type="button" class="chip" id="copyLink">🔗 คัดลอกลิงก์สถานะ (เปิดในเครื่องอื่นแล้วสถานะตามไปด้วย)</button><span id="syncMsg" role="status"></span></div>
+  <div class="chips"><button type="button" class="chip" id="setToken">☁️ ตั้งค่าซิงก์อัตโนมัติ</button><button type="button" class="chip" id="copyLink">🔗 คัดลอกลิงก์สถานะ (เปิดในเครื่องอื่นแล้วสถานะตามไปด้วย)</button><span id="syncMsg" role="status"></span></div>
   <div class="count" id="count"></div>
   <main class="grid" id="grid"></main>
   <footer>
@@ -131,6 +131,94 @@ document.getElementById("copyLink").onclick = async () => {
   try { await navigator.clipboard.writeText(url); syncMsg("คัดลอกลิงก์แล้ว เปิดลิงก์นี้ในเครื่องอื่นได้เลย"); }
   catch { prompt("คัดลอกลิงก์นี้ไปเปิดในเครื่องอื่น", url); }
 };
+// ---- ซิงก์สถานะข้ามเครื่องอัตโนมัติ: เก็บเป็นไฟล์ status.json ใน repo เดียวกันนี้ (repo ของเจ้าของเว็บเอง ไม่มีบริการภายนอก)
+// อ่านได้ทุกเครื่องโดยไม่ต้องตั้งค่า · เขียนต้องวางโทเคน GitHub (สิทธิ์ Contents อย่างเดียว เฉพาะ repo นี้) ครั้งเดียวต่อเครื่อง
+const SYNC = { api: "https://api.github.com/repos/pooonggg/youtube-channel-analyzer/contents/status.json", branch: "main" };
+const TS_KEY = "yt-library-status-ts-v1", TOKEN_KEY = "yt-library-gh-token";
+const ls = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+let tsMap = (() => { try { return JSON.parse(ls.get(TS_KEY)) || {}; } catch { return {}; } })();
+let pushTimer = null, syncing = false;
+function saveTs() { ls.set(TS_KEY, JSON.stringify(tsMap)); }
+function touch(id) { tsMap[id] = Date.now(); saveTs(); schedulePush(); }
+function ghHeaders() {
+  const t = ls.get(TOKEN_KEY);
+  return { Accept: "application/vnd.github+json", ...(t ? { Authorization: "Bearer " + t } : {}) };
+}
+async function fetchRemote() {
+  const r = await fetch(`${SYNC.api}?ref=${SYNC.branch}&_=${Date.now()}`, { headers: ghHeaders(), cache: "no-store" });
+  if (r.status === 404) return { items: {}, sha: null };
+  if (!r.ok) throw new Error("อ่านไม่ได้ (" + r.status + ")");
+  const j = await r.json();
+  return { items: JSON.parse(atob(j.content.replace(/\s/g, ""))).items || {}, sha: j.sha };
+}
+// รวมต่อคลิป: เวลาที่กดล่าสุดชนะ · เวลาเท่ากัน (เช่น ค่าตั้งต้นที่ไม่มีเวลา) ให้ยึดค่าในเครื่องที่มีสถานะอยู่
+function mergeRemote(items) {
+  let changed = false, differs = false;
+  const ids = new Set([...Object.keys(statusMap), ...Object.keys(tsMap), ...Object.keys(items)]);
+  for (const id of ids) {
+    const l = { s: statusMap[id] ?? null, t: tsMap[id] || 0 };
+    const r = items[id] ? { s: items[id].s ?? null, t: items[id].t || 0 } : null;
+    if (r && (r.t > l.t || (r.t === l.t && l.s === null))) {
+      if (r.s !== l.s) { r.s ? statusMap[id] = r.s : delete statusMap[id]; changed = true; }
+      if (r.t) tsMap[id] = r.t;
+    } else if (l.s !== null || l.t > 0) {
+      if (!r || r.s !== l.s || r.t !== l.t) differs = true;
+    }
+  }
+  return { changed, differs };
+}
+async function pull() {
+  try {
+    const { items } = await fetchRemote();
+    const { changed, differs } = mergeRemote(items);
+    store.set(statusMap); saveTs();
+    if (changed) render();
+    if (differs) schedulePush(); else if (ls.get(TOKEN_KEY)) syncMsg("☁️ ซิงก์แล้ว");
+  } catch (e) { syncMsg("ซิงก์ไม่ได้ ใช้ค่าในเครื่องนี้ไปก่อน (" + e.message + ")"); }
+}
+function schedulePush() {
+  if (!ls.get(TOKEN_KEY)) { syncMsg("บันทึกในเครื่องนี้แล้ว · ยังไม่ได้ตั้งค่าซิงก์ เครื่องอื่นจึงยังไม่เห็น"); return; }
+  clearTimeout(pushTimer); pushTimer = setTimeout(() => push(true), 1200);
+}
+async function push(retry) {
+  if (syncing) { clearTimeout(pushTimer); pushTimer = setTimeout(() => push(retry), 800); return; }
+  syncing = true;
+  try {
+    const { items, sha } = await fetchRemote();
+    const { changed } = mergeRemote(items);
+    if (changed) { store.set(statusMap); saveTs(); render(); }
+    const out = {};
+    for (const id of new Set([...Object.keys(statusMap), ...Object.keys(tsMap)])) {
+      if (statusMap[id] || tsMap[id]) out[id] = { s: statusMap[id] ?? null, t: tsMap[id] || 1 };
+    }
+    const r = await fetch(SYNC.api, {
+      method: "PUT", headers: { ...ghHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Update viewer status", branch: SYNC.branch, ...(sha ? { sha } : {}),
+        content: btoa(JSON.stringify({ v: 1, items: out })) }),
+    });
+    if ((r.status === 409 || r.status === 422) && retry) { syncing = false; return push(false); }
+    if (r.status === 401 || r.status === 403) throw new Error("โทเคนใช้ไม่ได้ หมดอายุ หรือไม่มีสิทธิ์เขียน repo นี้");
+    if (!r.ok) throw new Error("เขียนไม่ได้ (" + r.status + ")");
+    for (const id of Object.keys(out)) if (!tsMap[id]) tsMap[id] = 1;
+    saveTs(); syncMsg("☁️ ซิงก์แล้ว");
+  } catch (e) { syncMsg("ซิงก์ไม่สำเร็จ: " + e.message); }
+  syncing = false;
+}
+document.getElementById("setToken").onclick = () => {
+  const has = !!ls.get(TOKEN_KEY);
+  const t = prompt("วางโทเคน GitHub (fine-grained token เฉพาะ repo youtube-channel-analyzer สิทธิ์ Contents: Read and write)" +
+    (has ? "\n\nเครื่องนี้มีโทเคนอยู่แล้ว วางอันใหม่เพื่อเปลี่ยน หรือเว้นว่างแล้วกดตกลงเพื่อลบ" : ""));
+  if (t === null) return;
+  if (t.trim()) { ls.set(TOKEN_KEY, t.trim()); syncMsg("เก็บโทเคนในเบราว์เซอร์นี้แล้ว กำลังซิงก์…"); push(true); }
+  else { ls.del(TOKEN_KEY); syncMsg("ลบโทเคนออกจากเครื่องนี้แล้ว"); }
+};
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pull(); });
+setTimeout(pull, 0);
+
 const state = { q: "", s1: "rank", s2: "", statuses: new Set(["none", "interested", "watched"]), channels: new Set() };
 
 const now = Date.now();
@@ -217,7 +305,7 @@ function card(v, episodes) {
   el.querySelectorAll(".status button").forEach(b => b.onclick = () => {
     const k = b.dataset.k;
     if (statusMap[v.id] === k) delete statusMap[v.id]; else statusMap[v.id] = k;
-    store.set(statusMap);
+    store.set(statusMap); touch(v.id);
     if (!state.statuses.has(statusMap[v.id] ?? "none")) render();
     else el.querySelectorAll(".status button").forEach(x => {
       const on = statusMap[v.id] === x.dataset.k; x.classList.toggle("on", on); x.setAttribute("aria-pressed", on);

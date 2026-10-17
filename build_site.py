@@ -70,6 +70,10 @@ def load_videos() -> list[dict]:
 
 def main() -> None:
     videos = load_videos()
+    ids = [v["id"] for v in videos]
+    dup = sorted({i for i in ids if ids.count(i) > 1})
+    if dup:  # one card (one link) per video — never publish the same video twice
+        raise SystemExit(f"พบคลิปซ้ำบนเว็บ ห้าม publish: {dup}")
     con = db.connect()
     baseline = {r["video_id"]: r["status"] for r in con.execute("SELECT video_id, status FROM user_status")}
     con.close()

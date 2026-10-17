@@ -459,11 +459,16 @@ def main() -> int:
         return 0
     if args.cmd == "import-status":
         m = json.loads(args.file.read_text(encoding="utf-8"))
+        if "items" in m:  # status.json written by the website: {"items": {id: {"s": status|null, "t": ms}}}
+            m = {k: v.get("s") for k, v in m["items"].items()}
         known = {r["video_id"] for r in con.execute("SELECT video_id FROM videos")}
         ok = {k: v for k, v in m.items() if k in known and v in ("watched", "interested", "not_interested")}
         for vid, st in ok.items():
             db.set_status(con, vid, st)
-        print(f"นำเข้าสถานะ {len(ok)} คลิป (ข้าม {len(m) - len(ok)})")
+        cleared = [k for k, v in m.items() if v is None and k in known]
+        for vid in cleared:
+            db.set_status(con, vid, None)
+        print(f"นำเข้าสถานะ {len(ok)} คลิป · ล้างสถานะ {len(cleared)} คลิป (ข้าม {len(m) - len(ok) - len(cleared)})")
         return 0
     if args.cmd == "stats":
         print_stats(con)
