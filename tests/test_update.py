@@ -69,6 +69,7 @@ def test_comment_signals_counts_complaints_with_likes():
         {"parent_id": None, "text": "ไม่สนุกเลย", "like_count": 2},
         {"parent_id": None, "text": "ชั่วโมงที่ 5 เสียงหาย", "like_count": 30},
         {"parent_id": None, "text": "น้ำเยอะไปหน่อย", "like_count": 1},
+        {"parent_id": None, "text": "ยาวแต่ไม่น่าเบื่อเลย", "like_count": 50},  # negated: not filler
         {"parent_id": "x", "text": "เสียงหายจริง", "like_count": 99},   # replies are not counted
     ]
     s = ingest.comment_signals(rows)
