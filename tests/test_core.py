@@ -73,7 +73,7 @@ def test_compact_comments_groups_and_drops_noise():
     ]
     lines, noise = compact_comments(rows)
     assert noise == 2
-    assert lines == ["- [5] สนุกมาก ×2", "  ↳[0] จริง ชอบ", "short: praise=0 sequel_request=0"]
+    assert lines == ["#1 [5] สนุกมาก ×2", "  #1.1 [0] จริง ชอบ", "short: praise=0 sequel_request=0"]
 
 
 def test_compact_comments_counts_short_praise_but_keeps_complaints():
@@ -96,5 +96,5 @@ def test_compact_comments_keeps_pushback_replies_under_complaints():
         {"comment_id": "3", "parent_id": "1", "text": "เห็นด้วย", "like_count": 1},
     ]
     lines, _ = compact_comments(rows)
-    assert lines[1] == "  ↳[7] ไม่เห็นด้วย ช่วงนั้นปูเรื่องก่อนหักมุม"
-    assert lines[2] == "  ↳[1] เห็นด้วย"
+    assert lines[1] == "  #1.1 [7] ไม่เห็นด้วย ช่วงนั้นปูเรื่องก่อนหักมุม"
+    assert lines[2] == "  #1.2 [1] เห็นด้วย"

@@ -95,8 +95,12 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 
 MIGRATIONS = {
-    "videos": {"duplicate_of": "TEXT"},
-    "channels": {"source_url": "TEXT"},
+    # manual_duplicate_of: a re-upload Claude confirmed by reading it (survives mark_duplicates)
+    # first_seen_at: when this library first saw the clip (set once, used by the run report)
+    "videos": {"duplicate_of": "TEXT", "manual_duplicate_of": "TEXT", "first_seen_at": "TEXT"},
+    # origin: NULL/'manual' = added by hand with `ingest.py channel`, 'subscription' = from the
+    # viewing account's subscriptions · subscribed: 1 while that account still follows it
+    "channels": {"source_url": "TEXT", "origin": "TEXT", "subscribed": "INTEGER"},
     "scores": {"tie_rank": "INTEGER", "series": "TEXT", "series_order": "INTEGER"},
 }
 
@@ -124,9 +128,9 @@ def upsert_videos(con, rows: list[dict]) -> None:
     ts = now_iso()
     con.executemany(
         """INSERT INTO videos (video_id, channel_id, title, published_at, duration_seconds,
-             view_count, like_count, comment_count, thumbnail_url, stats_updated_at)
+             view_count, like_count, comment_count, thumbnail_url, stats_updated_at, first_seen_at)
            VALUES (:video_id, :channel_id, :title, :published_at, :duration_seconds,
-             :view_count, :like_count, :comment_count, :thumbnail_url, :ts)
+             :view_count, :like_count, :comment_count, :thumbnail_url, :ts, :ts)
            ON CONFLICT(video_id) DO UPDATE SET title=excluded.title,
              duration_seconds=excluded.duration_seconds, view_count=excluded.view_count,
              like_count=excluded.like_count, comment_count=excluded.comment_count,
@@ -190,6 +194,13 @@ def set_series(con, series: str | None, video_ids: list[str]) -> None:
             raise ValueError(f"{vid} has no score yet — score it before grouping")
 
 
+# Channels the update run pulls new clips from: everything added by hand plus whatever the
+# viewing account currently subscribes to (a channel that was unsubscribed keeps its clips/scores).
+TRACKED_CHANNELS_SQL = "(c.origin IS NULL OR c.origin = 'manual' OR c.subscribed = 1)"
+
+DAILY_QUOTA = 10_000
+
+
 def add_quota(con, units: int) -> None:
     if units:
         con.execute(
@@ -202,6 +213,10 @@ def add_quota(con, units: int) -> None:
 def quota_today(con) -> int:
     row = con.execute("SELECT units FROM quota_log WHERE day_pt = ?", (today_pt(),)).fetchone()
     return row["units"] if row else 0
+
+
+def quota_left(con) -> int:
+    return DAILY_QUOTA - quota_today(con)
 
 
 LIBRARY_SQL = """

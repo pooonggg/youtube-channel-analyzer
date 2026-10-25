@@ -37,6 +37,7 @@ input:focus, select:focus { border-color: #555; }
 .badge { position: absolute; color: #fff; font-size: 12.5px; font-weight: 600; padding: 2px 7px;
   border-radius: 6px; background: rgba(0,0,0,.82); }
 .b-rank { left: 8px; top: 8px; } .b-dur { right: 8px; bottom: 8px; } .b-score { right: 8px; top: 8px; }
+.b-pending { right: 8px; top: 8px; background: rgba(60,60,60,.92); font-weight: 500; }
 .s-hi { background: var(--hi); } .s-mid { background: var(--mid); } .s-lo { background: var(--lo); }
 .title { font-size: 15.5px; font-weight: 600; line-height: 1.4; margin: 12px 0 4px; display: -webkit-box;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -83,6 +84,7 @@ footer { margin-top: 48px; color: #777; font-size: 12.5px; line-height: 1.6; }
   </div>
   <div class="chips" id="statusChips" aria-label="กรองตามสถานะ"></div>
   <div class="chips" id="channelChips" aria-label="กรองตามช่อง"></div>
+  <div class="chips"><button type="button" class="chip" id="resetFilters" title="ตัวกรองและการเรียงจะถูกจำไว้ในเบราว์เซอร์นี้">↺ ล้างตัวกรองกลับค่าเริ่มต้น</button></div>
   <div class="chips"><button type="button" class="chip" id="setToken">☁️ ตั้งค่าซิงก์อัตโนมัติ</button><button type="button" class="chip" id="copyLink">🔗 คัดลอกลิงก์ส่วนตัวสำหรับเครื่องอื่น</button><span id="syncMsg" role="status"></span></div>
   <div class="count" id="count"></div>
   <main class="grid" id="grid"></main>
@@ -218,7 +220,25 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 renderSyncBtn();
 setTimeout(pull, 0);
 
-const state = { q: "", s1: "rank", s2: "", statuses: new Set(["none", "interested", "watched"]), channels: new Set() };
+// ตัวกรอง/การเรียงที่ผู้ชมเลือกไว้ จำไว้ในเบราว์เซอร์นี้ (ไม่รวมช่องค้นหา) — รีเฟรชแล้วได้ค่าเดิม
+const FILTER_KEY = "yt-library-filters-v1";
+const DEFAULT_FILTERS = { s1: "rank", s2: "", statuses: ["none", "interested", "watched"], channels: [] };
+function loadFilters() {
+  const f = { ...DEFAULT_FILTERS };
+  try { Object.assign(f, JSON.parse(ls.get(FILTER_KEY)) || {}); } catch {}
+  const allCh = new Set(DATA.videos.map(v => v.ch));
+  return {
+    q: "",
+    s1: f.s1 in SORTS ? f.s1 : DEFAULT_FILTERS.s1,
+    s2: f.s2 === "" || f.s2 in SORTS ? f.s2 : "",
+    statuses: new Set((Array.isArray(f.statuses) ? f.statuses : DEFAULT_FILTERS.statuses).filter(k => k in STATUS_FILTER)),
+    channels: new Set((Array.isArray(f.channels) ? f.channels : []).filter(c => allCh.has(c))),  // ช่องที่ไม่มีแล้วตัดทิ้ง
+  };
+}
+function saveFilters() {
+  ls.set(FILTER_KEY, JSON.stringify({ s1: state.s1, s2: state.s2, statuses: [...state.statuses], channels: [...state.channels] }));
+}
+const state = loadFilters();
 
 const now = Date.now();
 for (const v of DATA.videos) {
@@ -286,7 +306,7 @@ function card(v, episodes) {
     <a class="thumb" href="${url}" target="_blank" rel="noopener">
       <img src="${esc(v.thumb)}" alt="" loading="lazy">
       ${v.rank ? `<span class="badge b-rank">#${v.rank}</span>` : ""}
-      ${v.score != null ? `<span class="badge b-score ${scoreClass(v.score)}">${Math.round(v.score)}</span>` : ""}
+      ${v.score != null ? `<span class="badge b-score ${scoreClass(v.score)}">${Math.round(v.score)}</span>` : `<span class="badge b-pending">⏳ รอคะแนน</span>`}
       <span class="badge b-dur">${v.durText}</span>
     </a>
     <div class="title"><a href="${url}" target="_blank" rel="noopener" title="${esc(v.title)}">${esc(v.title)}</a></div>
@@ -314,6 +334,7 @@ function card(v, episodes) {
 }
 
 function render() {
+  saveFilters();
   const q = state.q.trim().toLowerCase();
   let list = DATA.videos.filter(v =>
     state.statuses.has(statusMap[v.id] ?? "none") &&
@@ -340,17 +361,27 @@ function render() {
   const nCh = new Set(DATA.videos.map(v => v.ch)).size;
   const scored = DATA.videos.filter(v => v.score != null).length;
   document.getElementById("sub").innerHTML =
-    `คลิปยาวกว่า <b>10 ชั่วโมง</b> · ยอดวิว <b>50K+</b> (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุ) · <b>${DATA.videos.length}</b> คลิป จาก <b>${nCh}</b> ช่อง · Claude ให้คะแนน <b>${scored}</b> คลิป`;
+    `คลิปยาวกว่า <b>10 ชั่วโมง</b> · ยอดวิว <b>${shortNum(DATA.minViews ?? 40000)}+</b> (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุ) · <b>${DATA.videos.length}</b> คลิป จาก <b>${nCh}</b> ช่อง · Claude ให้คะแนน <b>${scored}</b> คลิป` +
+    (scored < DATA.videos.length ? ` · รอคะแนน <b>${DATA.videos.length - scored}</b> คลิป` : "");
   document.getElementById("gen").textContent = "อัปเดต " + new Date(DATA.generatedAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
   const s1 = document.getElementById("s1"), s2 = document.getElementById("s2");
   for (const [k, [l]] of Object.entries(SORTS)) s1.add(new Option("เรียงตาม: " + l, k));
   s2.add(new Option("แล้วตาม: —", ""));
   for (const [k, [l]] of Object.entries(SORTS)) s2.add(new Option("แล้วตาม: " + l, k));
+  s1.value = state.s1; s2.value = state.s2;
   s1.onchange = () => { state.s1 = s1.value; render(); };
   s2.onchange = () => { state.s2 = s2.value; render(); };
   document.getElementById("q").oninput = e => { state.q = e.target.value; render(); };
+  document.getElementById("resetFilters").onclick = () => {
+    const d = loadFiltersDefault();
+    Object.assign(state, d); s1.value = state.s1; s2.value = state.s2;
+    renderChips(); render();
+  };
   renderChips(); render();
 })();
+function loadFiltersDefault() {
+  return { s1: DEFAULT_FILTERS.s1, s2: DEFAULT_FILTERS.s2, statuses: new Set(DEFAULT_FILTERS.statuses), channels: new Set() };
+}
 </script>
 </body>
 </html>

@@ -16,9 +16,12 @@
   python ingest.py import-scores <file.json>
   python ingest.py set-ties <file.json>    {"video_id": tie_rank, ...} (1 = บนสุดในกลุ่มคะแนนเท่ากัน)
   python ingest.py set-series <file.json>   [{"series": "ชื่อเรื่อง", "videos": [id ตามลำดับ]}]
+  python ingest.py set-duplicate <id> <of> [--clear]
+                                       mark a re-upload Claude confirmed (kept across mark_duplicates)
   python ingest.py quota               units used today (Pacific day)
 
-Eligible = not a duplicate, longer than 10 h, more than 50,000 views (see db.ELIGIBLE_SQL).
+The whole update (subscriptions -> new clips -> comments -> site) is `python update.py`.
+Eligible = not a duplicate, longer than 10 h, views above an age-based bar (see db.ELIGIBLE_SQL).
 Quota rules: re-running a channel stops at the first already-known page; comments are fetched
 once per eligible video (unless --recheck-comments finds the count grew 10%+).
 """
@@ -73,9 +76,10 @@ def _channel_row(ch: dict, source_url: str | None = None) -> dict:
 def mark_duplicates(con) -> int:
     """Same exact title (whitespace-trimmed) and duration within a few seconds = same clip.
     The copy with the most views stays; the others point to it via duplicate_of."""
-    con.execute("UPDATE videos SET duplicate_of = NULL")
+    con.execute("UPDATE videos SET duplicate_of = manual_duplicate_of")
     groups: dict[str, list] = {}
-    for r in con.execute("SELECT video_id, title, duration_seconds, view_count FROM videos"):
+    for r in con.execute("SELECT video_id, title, duration_seconds, view_count FROM videos "
+                         "WHERE manual_duplicate_of IS NULL"):
         groups.setdefault(" ".join(r["title"].split()), []).append(r)
     marked = 0
     for rows in groups.values():
@@ -286,8 +290,8 @@ def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_rep
     - short (<=30 chars), low-like comments that only praise or ask for a sequel become counts;
       short comments with complaint words are always kept verbatim
     - longer comments: top 50 by likes, plus every remaining one that contains a complaint word
-    - replies: at most 3 per thread (most-liked first, shown as ↳[likes]), under threads with 3+ likes,
-      a complaint word, or 2+ replies
+    - kept threads are numbered #1, #2, ... and their replies #1.1, #1.2 (at most 3 per thread,
+      most-liked first), shown under threads with 3+ likes, a complaint word, or 2+ replies
     """
     tops: OrderedDict[str, dict] = OrderedDict()
     replies: dict[str, list[str]] = {}
@@ -326,9 +330,9 @@ def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_rep
     lines = []
     ranked = sorted(long_groups, key=lambda g: (-g["likes"], -g["n"]))
     kept = ranked[:max_long] + [g for g in ranked[max_long:] if _NEG.search(g["text"])]
-    for g in kept:
+    for no, g in enumerate(kept, 1):
         dup = f" ×{g['n']}" if g["n"] > 1 else ""
-        lines.append(f"- [{g['likes']}] {g['text'][:max_len]}{dup}")
+        lines.append(f"#{no} [{g['likes']}] {g['text'][:max_len]}{dup}")
         reps = sorted((x for cid in g["ids"] for x in replies.get(cid, [])), key=lambda x: -x[0])
         # replies show how the crowd reacted (agreed / pushed back): keep them under popular threads,
         # under complaints, and under threads that drew 2+ replies
@@ -338,7 +342,7 @@ def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_rep
         for rl, rep in reps:
             if rep.lower() not in seen and len(seen) < max_replies:
                 seen.add(rep.lower())
-                lines.append(f"  ↳[{rl}] {rep}")
+                lines.append(f"  #{no}.{len(seen)} [{rl}] {rep}")
     if len(kept) < len(ranked):
         lines.append(f"(+{len(ranked) - len(kept)} more neutral/positive longer comments omitted)")
     lines.append(f"short: praise={praise} sequel_request={sequel}"
@@ -346,8 +350,67 @@ def compact_comments(rows, max_len: int = 160, max_reply_len: int = 100, max_rep
     return lines, noise
 
 
+# Rule-based counts over every top-level comment, so the scorer sees the crowd's balance before
+# reading individual comments. Each category shows comments/likes (likes = how many agreed).
+SIGNALS = {
+    "praise": re.compile(r"(?<!ไม่)(สนุก|ชอบ|มันส์|เยี่ยม|สุดยอด|เพลิน|ปัง|เริ่ด|ดีมาก|คุ้ม|ดูวน|ดูจบ)|good|thank", re.I),
+    "sequel": re.compile(r"ภาค ?ต่อ|ภาค ?\d|ขอต่อ|ต่อด่วน|ซีซั่?น|season|ss ?\d|รอ(ภาค|ตอน)", re.I),
+    "audio": re.compile(r"เสียง ?(หาย|เงียบ|เบา|แตก|ไม่มี|ไม่ได้ยิน|ไม่ตรง)|ไม่มีเสียง|ไม่พากย์|พากย์หาย|ไม่มีซับ|ซับหาย"),
+    "skip": re.compile(r"ข้าม|ตัดต่อ|ตัดจบ|ตอนหาย|ขาดหาย|เนื้อเรื่องหาย|หายไป ?\d|ไม่ต่อเนื่อง|กระโดด|ขาดตอน"),
+    "filler": re.compile(r"น้ำ ?(เยอะ|มาก|ท่วม|ลาย)|ยืด|ลากยาว|เดินเรื่องช้า|เอาแต่พูด|พูดเยอะ|คุยเยอะ|น่าเบื่อ"),
+    "dislike": re.compile(r"ไม่สนุก|ไม่ชอบ|ห่วย|ขยะ|เสียเวลา|ไม่ไหว|ไม่สมเหตุสมผล|มั่ว|งง|เลิกดู"),
+}
+
+
+def comment_signals(rows) -> str:
+    counts = {k: [0, 0] for k in SIGNALS}
+    for r in rows:
+        if r["parent_id"]:
+            continue
+        text = _norm(r["text"])
+        for k, rx in SIGNALS.items():
+            if rx.search(text):
+                counts[k][0] += 1
+                counts[k][1] += r["like_count"] or 0
+    return "signals: " + " ".join(f"{k}={n}/{_short(l)}👍" for k, (n, l) in counts.items())
+
+
+def _video_header(v, rows) -> str:
+    like_pct = f"{100 * v['like_count'] / v['view_count']:.2f}%" if v["like_count"] and v["view_count"] else "-"
+    return (f"ch={v['channel_title']} pub={v['published_at'][:10]} dur={(v['duration_seconds'] or 0) / 3600:.1f}h "
+            f"views={_short(v['view_count'])} likes={_short(v['like_count'])} ({like_pct}) "
+            f"comments={v['comment_count']} fetched={len(rows)}")
+
+
+def _comment_rows(con, video_id: str):
+    return con.execute("SELECT comment_id, parent_id, text, like_count FROM comments WHERE video_id = ? "
+                       "ORDER BY published_at", (video_id,)).fetchall()
+
+
+SCORE_BANDS = [(85, 101), (70, 85), (55, 70), (40, 55), (0, 40)]
+
+
+def calibration_lines(con, per_band: int = 2) -> list[str]:
+    """Already-scored clips, a couple per score band, shown as numbers + the one-line reason only
+    (no comments) so new clips are scored on the same scale as the old ones."""
+    out = []
+    for lo, hi in SCORE_BANDS:
+        rows = con.execute(f"""
+            SELECT v.*, c.title AS channel_title, s.score, s.reasons FROM videos v
+            JOIN channels c USING (channel_id) JOIN scores s USING (video_id)
+            WHERE {db.ELIGIBLE_SQL} AND s.score >= ? AND s.score < ? AND v.comments_status = 'ok'
+            ORDER BY v.comment_count DESC LIMIT ?""", (lo, hi, per_band)).fetchall()
+        for v in rows:
+            c_rows = _comment_rows(con, v["video_id"])
+            out += [f"- **{v['score']:.0f}** {v['title'][:60]} | {_video_header(v, c_rows)}",
+                    f"  {comment_signals(c_rows)} | เหตุผลเดิม: {(v['reasons'] or '')[:180]}"]
+    return out
+
+
 def export_scoring(con, channel: str | None = None, limit: int | None = None,
-                   ids: list[str] | None = None, include_scored: bool = False) -> Path:
+                   ids: list[str] | None = None, include_scored: bool = False,
+                   with_calibration: bool = False, extra: list[str] | None = None,
+                   tag: str | None = None) -> Path:
     where = [db.ELIGIBLE_SQL]
     args: list = []
     if not include_scored:
@@ -364,21 +427,22 @@ def export_scoring(con, channel: str | None = None, limit: int | None = None,
     if limit:
         sql += f" LIMIT {int(limit)}"
     vids = con.execute(sql, args).fetchall()
-    tag = re.sub(r"\W+", "-", channel or ("ids" if ids else "all")).strip("-")
+    tag = tag or re.sub(r"\W+", "-", channel or ("ids" if ids else "all")).strip("-")
     out = ROOT / "data" / "to_score" / f"{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{tag}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"# {len(vids)} videos. Format: [likes] comment ×duplicates; ↳ reply. Noise = emoji/laugh/timestamp-only.", ""]
+    lines = [f"# {len(vids)} videos. Format: #n [likes] comment ×duplicates; #n.k = reply k under thread n. "
+             "signals = rule-based counts over all top-level comments (comments/likes). "
+             "Noise = emoji/laugh/timestamp-only.", ""]
+    if with_calibration:
+        lines += ["## มาตรฐานเดิม (คลิปที่ให้คะแนนแล้ว ช่วงคะแนนละ 2 คลิป)", *calibration_lines(con), ""]
+    lines += extra or []
     for v in vids:
-        rows = con.execute("SELECT comment_id, parent_id, text, like_count FROM comments WHERE video_id = ? "
-                           "ORDER BY published_at", (v["video_id"],)).fetchall()
+        rows = _comment_rows(con, v["video_id"])
         body, noise = compact_comments(rows)
-        like_pct = f"{100 * v['like_count'] / v['view_count']:.2f}%" if v["like_count"] and v["view_count"] else "-"
         lines += [
             f"## {v['video_id']} | {v['title']}",
-            f"ch={v['channel_title']} pub={v['published_at'][:10]} dur={v['duration_seconds'] / 3600:.1f}h "
-            f"views={_short(v['view_count'])} likes={_short(v['like_count'])} ({like_pct}) "
-            f"comments={v['comment_count']} fetched={len(rows)} noise={noise} status={v['comments_status']}",
-            *body, "",
+            f"{_video_header(v, rows)} noise={noise} status={v['comments_status']}",
+            comment_signals(rows), *body, "",
         ]
     out.write_text("\n".join(lines), encoding="utf-8")
     return out
@@ -415,6 +479,28 @@ def import_scores(con, path: Path) -> int:
 SYNC_URL = "https://yt-library-status.ytlib-765e3f.workers.dev/status"
 
 
+def fetch_remote_status() -> dict:
+    """Statuses the website saved to its Cloudflare Worker (public read)."""
+    import urllib.request
+    req = urllib.request.Request(SYNC_URL, headers={"User-Agent": "yt-library-sync/1.0"})
+    return json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+
+
+def import_status(con, m: dict) -> tuple[int, int, int]:
+    """{"video_id": status} or the website's {"items": {id: {"s": status|null, "t": ms}}} -> user_status.
+    Returns (set, cleared, skipped)."""
+    if "items" in m:
+        m = {k: v.get("s") for k, v in m["items"].items()}
+    known = {r["video_id"] for r in con.execute("SELECT video_id FROM videos")}
+    ok = {k: v for k, v in m.items() if k in known and v in ("watched", "interested", "not_interested")}
+    for vid, st in ok.items():
+        db.set_status(con, vid, st)
+    cleared = [k for k, v in m.items() if v is None and k in known]
+    for vid in cleared:
+        db.set_status(con, vid, None)
+    return len(ok), len(cleared), len(m) - len(ok) - len(cleared)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -436,6 +522,8 @@ def main() -> int:
     s = sub.add_parser("import-scores"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-series"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-ties"); s.add_argument("file", type=Path)
+    s = sub.add_parser("set-duplicate"); s.add_argument("video_id"); s.add_argument("of")
+    s.add_argument("--clear", action="store_true")
     sub.add_parser("quota")
     args = p.parse_args()
 
@@ -463,22 +551,19 @@ def main() -> int:
         print(f"จัดกลุ่ม {len(groups)} เรื่อง")
         return 0
     if args.cmd in ("import-status", "pull-status"):
-        if args.cmd == "pull-status":   # statuses the website saved to its Cloudflare Worker (public read)
-            import urllib.request
-            req = urllib.request.Request(SYNC_URL, headers={"User-Agent": "yt-library-sync/1.0"})
-            m = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
-        else:
-            m = json.loads(args.file.read_text(encoding="utf-8"))
-        if "items" in m:  # status.json written by the website: {"items": {id: {"s": status|null, "t": ms}}}
-            m = {k: v.get("s") for k, v in m["items"].items()}
-        known = {r["video_id"] for r in con.execute("SELECT video_id FROM videos")}
-        ok = {k: v for k, v in m.items() if k in known and v in ("watched", "interested", "not_interested")}
-        for vid, st in ok.items():
-            db.set_status(con, vid, st)
-        cleared = [k for k, v in m.items() if v is None and k in known]
-        for vid in cleared:
-            db.set_status(con, vid, None)
-        print(f"นำเข้าสถานะ {len(ok)} คลิป · ล้างสถานะ {len(cleared)} คลิป (ข้าม {len(m) - len(ok) - len(cleared)})")
+        m = fetch_remote_status() if args.cmd == "pull-status" else json.loads(args.file.read_text(encoding="utf-8"))
+        n_set, n_clear, n_skip = import_status(con, m)
+        print(f"นำเข้าสถานะ {n_set} คลิป · ล้างสถานะ {n_clear} คลิป (ข้าม {n_skip})")
+        return 0
+    if args.cmd == "set-duplicate":
+        for vid in (args.video_id, args.of):
+            if not con.execute("SELECT 1 FROM videos WHERE video_id = ?", (vid,)).fetchone():
+                print(f"ไม่พบคลิป {vid}", file=sys.stderr)
+                return 1
+        con.execute("UPDATE videos SET manual_duplicate_of = ? WHERE video_id = ?",
+                    (None if args.clear else args.of, args.video_id))
+        mark_duplicates(con)
+        print(f"{args.video_id} {'ไม่ถือเป็นคลิปซ้ำแล้ว' if args.clear else 'เป็นคลิปซ้ำของ ' + args.of}")
         return 0
     if args.cmd == "stats":
         print_stats(con)

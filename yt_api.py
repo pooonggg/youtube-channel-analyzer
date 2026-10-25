@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import socket
+import time
 
 import isodate
 from googleapiclient.discovery import build
@@ -24,15 +26,27 @@ ERROR_TH = {
     "accessNotConfigured": "ยังไม่ได้เปิดใช้ YouTube Data API v3 ใน Google Cloud project นี้",
     "videoNotFound": "ไม่พบวิดีโอ",
     "channelNotFound": "ไม่พบช่อง ตรวจสอบ handle/ID อีกครั้ง",
+    "subscriptionForbidden": "รายชื่อช่องที่ติดตามถูกตั้งเป็นส่วนตัว (เปิดได้ที่ YouTube > ตั้งค่า > ความเป็นส่วนตัว)",
 }
 
 units_used = 0
 
 
+NETWORK_RETRIES = 3
+
+
 def _run(request):
+    """Execute one API page (= 1 unit). HTTP 5xx/429 are retried by the client library;
+    dropped connections and timeouts are retried here with a growing pause."""
     global units_used
     units_used += 1
-    return request.execute(num_retries=3)
+    for attempt in range(NETWORK_RETRIES + 1):
+        try:
+            return request.execute(num_retries=3)
+        except (ConnectionError, TimeoutError, socket.timeout, socket.gaierror):
+            if attempt == NETWORK_RETRIES:
+                raise
+            time.sleep(5 * (attempt + 1))
 
 
 def build_client(api_key: str):
@@ -94,6 +108,29 @@ def fetch_channel(yt, query: str | None = None, channel_id: str | None = None) -
     resp = _run(yt.channels().list(part="snippet,contentDetails", **params))
     items = resp.get("items", [])
     return items[0] if items else None
+
+
+def fetch_channels(yt, ids: list[str]) -> list[dict]:
+    """Channel snippet + uploads playlist for many channels: 1 unit per 50 channels."""
+    out = []
+    for i in range(0, len(ids), 50):
+        resp = _run(yt.channels().list(part="snippet,contentDetails", id=",".join(ids[i:i + 50]), maxResults=50))
+        out += resp.get("items", [])
+    return out
+
+
+def fetch_subscriptions(yt, channel_id: str) -> list[dict]:
+    """Channels that `channel_id` subscribes to; works with an API key only while that account's
+    subscriptions are public (otherwise HttpError reason 'subscriptionForbidden').
+    1 unit per 50 subscriptions."""
+    out, token = [], None
+    while True:
+        resp = _run(yt.subscriptions().list(part="snippet", channelId=channel_id, maxResults=50, pageToken=token))
+        out += [{"channel_id": it["snippet"]["resourceId"]["channelId"], "title": it["snippet"]["title"]}
+                for it in resp.get("items", [])]
+        token = resp.get("nextPageToken")
+        if not token:
+            return out
 
 
 def fetch_new_video_ids(yt, playlist_id: str, known: set[str], max_videos: int) -> list[str]:

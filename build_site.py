@@ -3,8 +3,9 @@
   python build_site.py
 
 Only public video metadata and Claude's summaries are published — never commenter names
-or raw comments. Viewer status (watched / interested / not interested) is kept in
-the visitor's own browser (localStorage), because a static page has no server.
+or raw comments. Viewer status (watched / interested / not interested) is synced through the
+Cloudflare Worker; filters/sort choices are remembered in the visitor's browser (localStorage).
+Eligible clips without a score yet are published too and shown as "⏳ รอคะแนน".
 """
 from __future__ import annotations
 
@@ -78,7 +79,7 @@ def main() -> None:
     baseline = {r["video_id"]: r["status"] for r in con.execute("SELECT video_id, status FROM user_status")}
     con.close()
     data = {"generatedAt": datetime.now(timezone.utc).isoformat(timespec="minutes"), "videos": videos,
-            "baseline": baseline}
+            "baseline": baseline, "minViews": db.MIN_VIEWS}
     page = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     OUT.parent.mkdir(exist_ok=True)
