@@ -98,3 +98,35 @@ def test_compact_comments_keeps_pushback_replies_under_complaints():
     lines, _ = compact_comments(rows)
     assert lines[1] == "  #1.1 [7] ไม่เห็นด้วย ช่วงนั้นปูเรื่องก่อนหักมุม"
     assert lines[2] == "  #1.2 [1] เห็นด้วย"
+
+
+def test_detect_language_from_titles():
+    assert db.detect_language(["🔥ทะลุมิติ", "Ep 2 พากย์ไทย", "trailer"]) == "th"
+    assert db.detect_language(["別人收徒倒貼錢", "第二季", "Shorts"]) == "zh"
+    assert db.detect_language(["Episode 1", "Episode 2"]) == "other"
+    assert db.detect_language([]) == "th"
+
+
+def test_other_language_channels_are_ranked_separately(tmp_path, monkeypatch):
+    import build_site
+    con = db.connect(tmp_path / "t.db")
+    for cid, title in (("T", "ช่องไทย"), ("Z", "哈哈")):
+        db.upsert_channel(con, {"channel_id": cid, "title": title, "handle": None, "url": "u",
+                                "thumbnail_url": None, "uploads_playlist": "UU" + cid, "last_fetched_at": None})
+    base = {"published_at": "2026-01-01T00:00:00Z", "duration_seconds": 40000, "like_count": 1,
+            "comment_count": 1, "thumbnail_url": None}
+    db.upsert_videos(con, [
+        {**base, "video_id": "T1", "channel_id": "T", "title": "เรื่องไทย", "view_count": 90_000},
+        {**base, "video_id": "Z1", "channel_id": "Z", "title": "修仙", "view_count": 900_000},
+        {**base, "video_id": "T2", "channel_id": "T", "title": "เรื่องไทย 2", "view_count": 80_000},
+    ])
+    for vid, score in (("T1", 70), ("Z1", 90), ("T2", 60)):
+        db.upsert_score(con, vid, score, "s", "r", 1)
+    con.commit()
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "t.db")
+    monkeypatch.setattr(db.connect, "__defaults__", (tmp_path / "t.db",))
+    got = {v["id"]: (v["foreign"], v["rank"]) for v in build_site.load_videos()}
+    assert got == {"Z1": (True, 1), "T1": (False, 1), "T2": (False, 2)}
+    con.execute("UPDATE channels SET language = 'th' WHERE channel_id = 'Z'")  # manual override wins
+    con.commit()
+    assert all(not v["foreign"] for v in build_site.load_videos())

@@ -10,6 +10,7 @@ Tables
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -100,7 +101,9 @@ MIGRATIONS = {
     "videos": {"duplicate_of": "TEXT", "manual_duplicate_of": "TEXT", "first_seen_at": "TEXT"},
     # origin: NULL/'manual' = added by hand with `ingest.py channel`, 'subscription' = from the
     # viewing account's subscriptions · subscribed: 1 while that account still follows it
-    "channels": {"source_url": "TEXT", "origin": "TEXT", "subscribed": "INTEGER"},
+    # language: audio language of the channel's clips — NULL = guess from titles (see channel_languages),
+    # 'th' = Thai dub (main page), anything else ('zh', 'en', ...) = the separate "other languages" tab
+    "channels": {"source_url": "TEXT", "origin": "TEXT", "subscribed": "INTEGER", "language": "TEXT"},
     "scores": {"tie_rank": "INTEGER", "series": "TEXT", "series_order": "INTEGER"},
 }
 
@@ -249,3 +252,26 @@ ELIGIBLE_SQL = (f"v.duplicate_of IS NULL AND v.duration_seconds > {MIN_DURATION_
 
 def required_views(age_days: float) -> float:
     return MIN_VIEWS * min(1.0, max(0.5, age_days) / RAMP_DAYS) ** 0.5
+
+
+# Clips not dubbed in Thai live in their own tab on the site (user asked 2026-11-02: hidden from the
+# main page until the "other languages" tab is opened; the user dubs them into Thai themself).
+LANGUAGE_LABELS = {"th": "พากย์ไทย", "zh": "เสียงจีน", "en": "เสียงอังกฤษ", "other": "ภาษาอื่น"}
+_THAI = re.compile(r"[฀-๿]")
+_CJK = re.compile(r"[一-鿿]")
+
+
+def detect_language(titles: list[str]) -> str:
+    """'th' when at least half of a channel's titles contain Thai script, else 'zh' / 'other'."""
+    if not titles or sum(bool(_THAI.search(t)) for t in titles) * 2 >= len(titles):
+        return "th"
+    return "zh" if sum(bool(_CJK.search(t)) for t in titles) * 2 >= len(titles) else "other"
+
+
+def channel_languages(con) -> dict[str, str]:
+    """channel_id -> language code; channels.language overrides the guess from titles."""
+    titles: dict[str, list[str]] = {}
+    for r in con.execute("SELECT channel_id, title FROM videos"):
+        titles.setdefault(r[0], []).append(r[1])
+    return {r[0]: r[1] or detect_language(titles.get(r[0], []))
+            for r in con.execute("SELECT channel_id, language FROM channels")}

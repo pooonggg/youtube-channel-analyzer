@@ -48,21 +48,27 @@ def md_to_html(text: str) -> str:
 def load_videos() -> list[dict]:
     con = db.connect()
     rows = con.execute(f"""
-        SELECT v.video_id, v.title, v.published_at, v.duration_seconds, v.view_count, v.like_count,
+        SELECT v.video_id, v.channel_id, v.title, v.published_at, v.duration_seconds, v.view_count, v.like_count,
                v.comment_count, v.thumbnail_url, c.title AS channel, c.url AS channel_url,
                s.score, s.tie_rank, s.summary, s.reasons, s.series, s.series_order
         FROM videos v JOIN channels c USING (channel_id) LEFT JOIN scores s USING (video_id)
         WHERE {db.ELIGIBLE_SQL}
         ORDER BY s.score IS NULL, s.score DESC, COALESCE(s.tie_rank, 9999), v.view_count DESC""").fetchall()
+    langs = db.channel_languages(con)
     con.close()
-    videos = []
-    for i, r in enumerate(rows, 1):
+    videos, ranks = [], {}  # Thai-dub clips and other-language clips are ranked separately (separate tabs)
+    for r in rows:
+        lang = langs.get(r["channel_id"], "th")
+        foreign = lang != "th"
+        if r["score"] is not None:
+            ranks[foreign] = ranks.get(foreign, 0) + 1
         videos.append({
+            "lang": lang, "foreign": foreign, "langLabel": db.LANGUAGE_LABELS.get(lang, lang),
             "id": r["video_id"], "title": r["title"], "pub": r["published_at"],
             "dur": r["duration_seconds"], "durText": yt_api.fmt_duration(r["duration_seconds"] or 0),
             "views": r["view_count"], "likes": r["like_count"], "comments": r["comment_count"],
             "thumb": r["thumbnail_url"], "ch": r["channel"], "chUrl": r["channel_url"],
-            "score": r["score"], "rank": i if r["score"] is not None else None,
+            "score": r["score"], "rank": ranks[foreign] if r["score"] is not None else None,
             "summary": md_to_html(r["summary"]), "reasons": html.escape(r["reasons"] or ""),
             "series": r["series"], "order": r["series_order"],
         })

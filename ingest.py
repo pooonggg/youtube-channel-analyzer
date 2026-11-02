@@ -18,7 +18,10 @@
   python ingest.py set-series <file.json>   [{"series": "ชื่อเรื่อง", "videos": [id ตามลำดับ]}]
   python ingest.py set-duplicate <id> <of> [--clear]
                                        mark a re-upload Claude confirmed (kept across mark_duplicates)
-  python ingest.py quota               units used today (Pacific day)
+  python ingest.py set-language <channel id|title> <th|zh|en|other|auto>
+                                       audio language of a channel (default: guessed from titles);
+                                       anything but th goes to the site's "other languages" tab
+  python ingest.py quota              units used today (Pacific day)
 
 The whole update (subscriptions -> new clips -> comments -> site) is `python update.py`.
 Eligible = not a duplicate, longer than 10 h, views above an age-based bar (see db.ELIGIBLE_SQL).
@@ -524,6 +527,7 @@ def main() -> int:
     s = sub.add_parser("set-ties"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-duplicate"); s.add_argument("video_id"); s.add_argument("of")
     s.add_argument("--clear", action="store_true")
+    s = sub.add_parser("set-language"); s.add_argument("channel"); s.add_argument("language")
     sub.add_parser("quota")
     args = p.parse_args()
 
@@ -564,6 +568,21 @@ def main() -> int:
                     (None if args.clear else args.of, args.video_id))
         mark_duplicates(con)
         print(f"{args.video_id} {'ไม่ถือเป็นคลิปซ้ำแล้ว' if args.clear else 'เป็นคลิปซ้ำของ ' + args.of}")
+        return 0
+    if args.cmd == "set-language":
+        if args.language != "auto" and args.language not in db.LANGUAGE_LABELS:
+            print(f"ภาษาต้องเป็น {', '.join(db.LANGUAGE_LABELS)} หรือ auto", file=sys.stderr)
+            return 1
+        cur = con.execute("UPDATE channels SET language = ? WHERE channel_id = ? OR title = ?",
+                          (None if args.language == "auto" else args.language, args.channel, args.channel))
+        con.commit()
+        if not cur.rowcount:
+            print(f"ไม่พบช่อง {args.channel}", file=sys.stderr)
+            return 1
+        langs = db.channel_languages(con)
+        for r in con.execute("SELECT channel_id, title FROM channels WHERE channel_id = ? OR title = ?",
+                             (args.channel, args.channel)):
+            print(f"{r['title']}: {db.LANGUAGE_LABELS.get(langs[r['channel_id']], langs[r['channel_id']])}")
         return 0
     if args.cmd == "stats":
         print_stats(con)

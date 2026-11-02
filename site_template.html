@@ -38,6 +38,9 @@ input:focus, select:focus { border-color: #555; }
   border-radius: 6px; background: rgba(0,0,0,.82); }
 .b-rank { left: 8px; top: 8px; } .b-dur { right: 8px; bottom: 8px; } .b-score { right: 8px; top: 8px; }
 .b-pending { right: 8px; top: 8px; background: rgba(60,60,60,.92); font-weight: 500; }
+.b-lang { left: 8px; bottom: 8px; font-weight: 500; }
+.tabs .chip { font-size: 14.5px; padding: 8px 16px; }
+.note { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
 .s-hi { background: var(--hi); } .s-mid { background: var(--mid); } .s-lo { background: var(--lo); }
 .title { font-size: 15.5px; font-weight: 600; line-height: 1.4; margin: 12px 0 4px; display: -webkit-box;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -82,6 +85,8 @@ footer { margin-top: 48px; color: #777; font-size: 12.5px; line-height: 1.6; }
     <select id="s1" aria-label="เรียงตาม"></select>
     <select id="s2" aria-label="แล้วตาม"></select>
   </div>
+  <div class="chips tabs" id="langTabs" aria-label="ภาษาเสียงของคลิป"></div>
+  <p class="note" id="tabNote" hidden></p>
   <div class="chips" id="statusChips" aria-label="กรองตามสถานะ"></div>
   <div class="chips" id="channelChips" aria-label="กรองตามช่อง"></div>
   <div class="chips"><button type="button" class="chip" id="resetFilters" title="ตัวกรองและการเรียงจะถูกจำไว้ในเบราว์เซอร์นี้">↺ ล้างตัวกรองกลับค่าเริ่มต้น</button></div>
@@ -239,6 +244,9 @@ function saveFilters() {
   ls.set(FILTER_KEY, JSON.stringify({ s1: state.s1, s2: state.s2, statuses: [...state.statuses], channels: [...state.channels] }));
 }
 const state = loadFilters();
+// แท็บภาษา: เปิดหน้าเว็บมาเจอคลิปพากย์ไทยเสมอ (ไม่จำค่า) · คลิปเสียงภาษาอื่นต้องกดแท็บ 🌐 ก่อนจึงจะแสดง
+state.tab = "th";
+const inTab = v => v.foreign === (state.tab === "other");
 
 const now = Date.now();
 for (const v of DATA.videos) {
@@ -271,6 +279,17 @@ function chip(label, on, onClick) {
   return b;
 }
 function renderChips() {
+  const tabs = document.getElementById("langTabs"); tabs.replaceChildren();
+  const nOther = DATA.videos.filter(v => v.foreign).length;
+  if (nOther) {
+    const labels = [...new Set(DATA.videos.filter(v => v.foreign).map(v => v.langLabel))].join(", ");
+    for (const [k, label] of [["th", `🇹🇭 พากย์ไทย (${DATA.videos.length - nOther})`], ["other", `🌐 ภาษาอื่น (${nOther})`]]) {
+      tabs.append(chip(label, state.tab === k, () => { state.tab = k; renderChips(); render(); }));
+    }
+    const note = document.getElementById("tabNote");
+    note.hidden = state.tab !== "other";
+    note.textContent = `คลิปที่ไม่ได้พากย์ไทย (${labels}) · คะแนนมาจากคอมเมนต์ของผู้ชมต่างชาติ · อันดับนับแยกจากแท็บพากย์ไทย`;
+  }
   const sc = document.getElementById("statusChips"); sc.replaceChildren();
   for (const [k, label] of Object.entries(STATUS_FILTER)) {
     sc.append(chip(label, state.statuses.has(k), () => {
@@ -278,7 +297,7 @@ function renderChips() {
     }));
   }
   const cc = document.getElementById("channelChips"); cc.replaceChildren();
-  const channels = [...new Set(DATA.videos.map(v => v.ch))].sort();
+  const channels = [...new Set(DATA.videos.filter(inTab).map(v => v.ch))].sort();
   if (channels.length < 2) return;
   for (const c of channels) {
     cc.append(chip(c, state.channels.has(c), () => {
@@ -307,6 +326,7 @@ function card(v, episodes) {
       <img src="${esc(v.thumb)}" alt="" loading="lazy">
       ${v.rank ? `<span class="badge b-rank">#${v.rank}</span>` : ""}
       ${v.score != null ? `<span class="badge b-score ${scoreClass(v.score)}">${Math.round(v.score)}</span>` : `<span class="badge b-pending">⏳ รอคะแนน</span>`}
+      ${v.foreign ? `<span class="badge b-lang">🌐 ${esc(v.langLabel)}</span>` : ""}
       <span class="badge b-dur">${v.durText}</span>
     </a>
     <div class="title"><a href="${url}" target="_blank" rel="noopener" title="${esc(v.title)}">${esc(v.title)}</a></div>
@@ -316,7 +336,7 @@ function card(v, episodes) {
       ${v.reasons ? `<p class="reasons">${v.reasons}</p>` : ""}</div></details>` : ""}
     ${episodes ? `<details><summary>📚 เรื่องนี้มี ${episodes.length} คลิป (ภาคต่อ/ฉบับอื่น)</summary>
       ${episodes.map(e => `<div class="ep"><a href="https://www.youtube.com/watch?v=${e.id}" target="_blank" rel="noopener">${e.order}. ${esc(e.title)}</a>${e.id === v.id ? '<span class="here">◀ การ์ดนี้</span>' : ""}<br>
-        <span>${esc(e.ch)} · ${e.durText} · ยอดดู ${shortNum(e.views)}${e.score != null ? ` · คะแนน <b>${Math.round(e.score)}</b>` : ""}${e.rank ? ` · อันดับ #${e.rank}` : ""}</span></div>`).join("")}
+        <span>${e.foreign ? `🌐 ${esc(e.langLabel)} · ` : ""}${esc(e.ch)} · ${e.durText} · ยอดดู ${shortNum(e.views)}${e.score != null ? ` · คะแนน <b>${Math.round(e.score)}</b>` : ""}${e.rank ? ` · อันดับ #${e.rank}${e.foreign ? " (แท็บภาษาอื่น)" : ""}` : ""}</span></div>`).join("")}
     </details>` : ""}
     <div class="status" role="group" aria-label="สถานะ">
       ${Object.entries(STATUS).map(([k, l]) => `<button type="button" data-k="${k}" class="${st === k ? "on" : ""}" aria-pressed="${st === k}">${l}</button>`).join("")}
@@ -336,9 +356,12 @@ function card(v, episodes) {
 function render() {
   saveFilters();
   const q = state.q.trim().toLowerCase();
-  let list = DATA.videos.filter(v =>
+  const tabVideos = DATA.videos.filter(inTab);
+  // ช่องที่เลือกไว้ในอีกแท็บไม่มีผลกับแท็บนี้ (ไม่อย่างนั้นสลับแท็บแล้วจะว่างเปล่า)
+  const chSel = new Set(tabVideos.map(v => v.ch).filter(c => state.channels.has(c)));
+  let list = tabVideos.filter(v =>
     state.statuses.has(statusMap[v.id] ?? "none") &&
-    (!state.channels.size || state.channels.has(v.ch)) &&
+    (!chSel.size || chSel.has(v.ch)) &&
     (!q || v.title.toLowerCase().includes(q)));
   list = sorted(list);
   // one card per story: the best-placed clip in the current order; all clips behind a dropdown
@@ -352,17 +375,19 @@ function render() {
     seen.add(v.series); return true;
   });
   const grid = document.getElementById("grid"); grid.replaceChildren();
-  document.getElementById("count").textContent = `แสดง ${cards.length} การ์ด (${list.length} คลิป) จากทั้งหมด ${DATA.videos.length} คลิป`;
+  document.getElementById("count").textContent = `แสดง ${cards.length} การ์ด (${list.length} คลิป) จากทั้งหมด ${tabVideos.length} คลิป${state.tab === "other" ? "ในแท็บภาษาอื่น" : ""}`;
   if (!cards.length) { grid.innerHTML = '<div class="empty">ไม่พบคลิปตามตัวกรองนี้</div>'; return; }
   for (const v of cards) grid.append(card(v, v.series && groups[v.series].length > 1 ? groups[v.series] : null));
 }
 
 (function init() {
-  const nCh = new Set(DATA.videos.map(v => v.ch)).size;
-  const scored = DATA.videos.filter(v => v.score != null).length;
+  const thai = DATA.videos.filter(v => !v.foreign), nOther = DATA.videos.length - thai.length;
+  const nCh = new Set(thai.map(v => v.ch)).size;
+  const scored = thai.filter(v => v.score != null).length;
   document.getElementById("sub").innerHTML =
-    `คลิปยาวกว่า <b>10 ชั่วโมง</b> · ยอดวิว <b>${shortNum(DATA.minViews ?? 40000)}+</b> (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุ) · <b>${DATA.videos.length}</b> คลิป จาก <b>${nCh}</b> ช่อง · Claude ให้คะแนน <b>${scored}</b> คลิป` +
-    (scored < DATA.videos.length ? ` · รอคะแนน <b>${DATA.videos.length - scored}</b> คลิป` : "");
+    `คลิปยาวกว่า <b>10 ชั่วโมง</b> · ยอดวิว <b>${shortNum(DATA.minViews ?? 40000)}+</b> (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุ) · พากย์ไทย <b>${thai.length}</b> คลิป จาก <b>${nCh}</b> ช่อง · Claude ให้คะแนน <b>${scored}</b> คลิป` +
+    (scored < thai.length ? ` · รอคะแนน <b>${thai.length - scored}</b> คลิป` : "") +
+    (nOther ? ` · เสียงภาษาอื่นอีก <b>${nOther}</b> คลิป (อยู่ในแท็บ 🌐)` : "");
   document.getElementById("gen").textContent = "อัปเดต " + new Date(DATA.generatedAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
   const s1 = document.getElementById("s1"), s2 = document.getElementById("s2");
   for (const [k, [l]] of Object.entries(SORTS)) s1.add(new Option("เรียงตาม: " + l, k));
