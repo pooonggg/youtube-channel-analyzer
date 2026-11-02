@@ -45,6 +45,13 @@ def md_to_html(text: str) -> str:
     return "".join(out)
 
 
+def split_summary(text: str | None) -> tuple[str, str]:
+    """('one-line story pitch', rest) — the summary's first line is **bold** by convention."""
+    lines = (text or "").strip().splitlines()
+    m = re.fullmatch(r"\*\*(.+)\*\*", lines[0].strip()) if lines else None
+    return (m.group(1), "\n".join(lines[1:])) if m else ("", text or "")
+
+
 def load_videos() -> list[dict]:
     con = db.connect()
     rows = con.execute(f"""
@@ -62,14 +69,16 @@ def load_videos() -> list[dict]:
         foreign = lang != "th"
         if r["score"] is not None:
             ranks[foreign] = ranks.get(foreign, 0) + 1
+        tag, rest = split_summary(r["summary"])
         videos.append({
+            "tag": html.escape(tag),
             "lang": lang, "foreign": foreign, "langLabel": db.LANGUAGE_LABELS.get(lang, lang),
             "id": r["video_id"], "title": r["title"], "pub": r["published_at"],
             "dur": r["duration_seconds"], "durText": yt_api.fmt_duration(r["duration_seconds"] or 0),
             "views": r["view_count"], "likes": r["like_count"], "comments": r["comment_count"],
             "thumb": r["thumbnail_url"], "ch": r["channel"], "chUrl": r["channel_url"],
             "score": r["score"], "rank": ranks[foreign] if r["score"] is not None else None,
-            "summary": md_to_html(r["summary"]), "reasons": html.escape(r["reasons"] or ""),
+            "summary": md_to_html(rest), "reasons": html.escape(r["reasons"] or ""),
             "series": r["series"], "order": r["series_order"],
         })
     return videos

@@ -3,112 +3,343 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>คลังคลิปน่าดู</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶️</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e0703a'/><path d='M12 9.5v13l10.5-6.5z' fill='%2312110f'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #0f0f0f; --panel: #1c1c1c; --panel-2: #272727; --text: #f1f1f1; --muted: #aaa;
-  --line: #2f2f2f; --accent: #ff4e45; --hi: #1e8e3e; --mid: #c77700; --lo: #b3261e;
+  --bg: #12110f; --surface: #1a1916; --surface-2: #23211d; --line: #2d2b26; --line-2: #3a3731;
+  --text: #ece7df; --muted: #a39d92; --faint: #6f6a61;
+  --accent: #e0703a; --accent-soft: rgba(224,112,58,.14);
+  --hi: #8cc08f; --mid: #dcaa4a; --lo: #d86a55;
+  --r: 10px; --r-lg: 14px;
+  --sans: 'IBM Plex Sans Thai', sans-serif; --serif: 'Noto Serif Thai', serif; --mono: 'IBM Plex Mono', monospace;
+  --ease: cubic-bezier(.2,.7,.2,1);
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Anuphan', sans-serif; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text); font: 400 15px/1.55 var(--sans);
+  background-image:
+    radial-gradient(1100px 420px at 12% -8%, rgba(224,112,58,.08), transparent 60%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
+  background-attachment: fixed; overflow-x: clip;
+}
 a { color: inherit; text-decoration: none; }
-.wrap { max-width: 1500px; margin: 0 auto; padding: 28px 24px 60px; }
-header h1 { font-size: 30px; margin: 0; letter-spacing: -.3px; }
-header p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
-header b { color: var(--text); font-weight: 600; }
-.bar { display: grid; grid-template-columns: 1fr 220px 220px; gap: 12px; margin: 22px 0 12px; }
-input, select { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line);
-  border-radius: 10px; padding: 10px 14px; font: inherit; font-size: 14px; outline: none; }
-input:focus, select:focus { border-color: #555; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
-.chip { background: var(--panel-2); border: 1px solid transparent; color: var(--text); border-radius: 999px;
-  padding: 6px 14px; font: inherit; font-size: 13.5px; cursor: pointer; transition: background .15s; }
-.chip:hover { background: #333; }
-.chip.on { background: var(--text); color: #0f0f0f; }
-.count { color: var(--muted); font-size: 13px; margin: 14px 0 18px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 34px 20px; }
-.thumb { position: relative; display: block; aspect-ratio: 16/9; border-radius: 12px; overflow: hidden;
-  background: #222; transition: border-radius .2s; }
-.thumb:hover { border-radius: 4px; }
-.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.badge { position: absolute; color: #fff; font-size: 12.5px; font-weight: 600; padding: 2px 7px;
-  border-radius: 6px; background: rgba(0,0,0,.82); }
-.b-rank { left: 8px; top: 8px; } .b-dur { right: 8px; bottom: 8px; } .b-score { right: 8px; top: 8px; }
-.b-pending { right: 8px; top: 8px; background: rgba(60,60,60,.92); font-weight: 500; }
-.b-lang { left: 8px; bottom: 8px; font-weight: 500; }
-.tabs .chip { font-size: 14.5px; padding: 8px 16px; }
-.note { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
-.s-hi { background: var(--hi); } .s-mid { background: var(--mid); } .s-lo { background: var(--lo); }
-.title { font-size: 15.5px; font-weight: 600; line-height: 1.4; margin: 12px 0 4px; display: -webkit-box;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.title a:hover, .meta a:hover { text-decoration: underline; }
-.meta { font-size: 13px; color: var(--muted); line-height: 1.55; }
-.meta .ch { color: #ddd; }
-details { background: #181818; border-radius: 10px; margin-top: 10px; font-size: 13.5px; }
-summary { cursor: pointer; padding: 9px 12px; list-style: none; user-select: none; }
-summary::-webkit-details-marker { display: none; }
-summary::before { content: "›"; display: inline-block; margin-right: 8px; transition: transform .15s; }
-details[open] summary::before { transform: rotate(90deg); }
-.why { padding: 0 14px 10px; line-height: 1.6; }
-.why p { margin: 6px 0; } .why ul { margin: 6px 0; padding-left: 18px; } .why li { margin: 3px 0; }
-.why .reasons { color: var(--muted); font-size: 12.5px; }
-.ep { padding: 7px 14px; border-top: 1px solid var(--line); line-height: 1.5; }
-.ep a:hover { text-decoration: underline; } .ep span { color: var(--muted); font-size: 12.5px; }
-.ep .here { color: var(--accent); font-size: 12px; margin-left: 4px; }
-.status { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 10px; border: 1px solid var(--line);
-  border-radius: 10px; overflow: hidden; }
-.status button { background: transparent; color: var(--text); border: 0; border-right: 1px solid var(--line);
-  padding: 8px 4px; font: inherit; font-size: 13px; cursor: pointer; }
-.status button:last-child { border-right: 0; }
-.status button:hover { background: #222; }
-.status button.on { background: #3a1513; color: #ff8a80; box-shadow: inset 0 0 0 1px var(--accent); }
-.empty { color: var(--muted); padding: 40px 0; }
-footer { margin-top: 48px; color: #777; font-size: 12.5px; line-height: 1.6; }
-@media (max-width: 760px) {
-  .wrap { padding: 20px 16px 48px; }
-  .bar { grid-template-columns: 1fr 1fr; } .bar input { grid-column: 1 / -1; }
-  .grid { grid-template-columns: 1fr; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+svg { display: block; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 0 28px; }
+
+/* ---------- header ---------- */
+.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 34px 0 22px; }
+.brand h1 { font: 700 30px/1.15 var(--serif); margin: 0; letter-spacing: -.2px; }
+.brand h1 em { font-style: normal; color: var(--accent); }
+.brand p { margin: 6px 0 0; color: var(--muted); font-size: 13.5px; }
+.brand p b { color: var(--text); font-weight: 500; font-family: var(--mono); font-size: 12.5px; }
+.icon-btn { width: 40px; height: 40px; display: grid; place-items: center; background: transparent;
+  border: 1px solid var(--line-2); border-radius: 999px; color: var(--muted); transition: color .15s, border-color .15s, background .15s; }
+.icon-btn:hover { color: var(--text); border-color: var(--muted); background: var(--surface); }
+.icon-btn .dot { position: absolute; }
+
+/* ---------- tabs ---------- */
+.tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; margin-bottom: 18px; }
+.tabs[hidden] { display: none; }
+.tabs button { border: 0; background: transparent; color: var(--muted); padding: 7px 16px; border-radius: 999px; font-size: 14px; font-weight: 500; transition: background .2s, color .2s; }
+.tabs button span { font-family: var(--mono); font-size: 12px; margin-left: 6px; opacity: .7; }
+.tabs button[aria-selected="true"] { background: var(--text); color: var(--bg); }
+.tabs button[aria-selected="true"] span { opacity: .6; }
+
+/* ---------- toolbar ---------- */
+.toolbar-wrap { position: sticky; top: 0; z-index: 20; margin: 0 -28px; padding: 10px 28px;
+  background: rgba(18,17,15,.86); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid transparent; transition: border-color .2s; }
+.toolbar-wrap.stuck { border-bottom-color: var(--line); }
+.toolbar { display: grid; grid-template-columns: 1fr auto 210px; gap: 10px; }
+.search { position: relative; }
+.search svg { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
+.field, .btn { height: 42px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); font-size: 14.5px; transition: border-color .15s, background .15s; }
+.field:hover, .btn:hover { border-color: var(--line-2); }
+.field:focus { outline: none; border-color: var(--muted); }
+input.field { width: 100%; padding: 0 14px 0 40px; }
+input.field::placeholder { color: var(--faint); }
+input[type="search"]::-webkit-search-cancel-button { filter: invert(.6); }
+select.field { width: 100%; padding: 0 36px 0 14px; appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23a39d92' stroke-width='1.6'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center; }
+select.field option { background: var(--surface-2); }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 0 16px; font-weight: 500; }
+.btn .n { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--bg); font: 600 11.5px/20px var(--mono); }
+.btn .n:empty { display: none; }
+.resultline { display: flex; align-items: center; gap: 14px; color: var(--faint); font-size: 13px; padding: 14px 0 4px; }
+.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 13px; }
+.link:hover { text-decoration: underline; }
+.note { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.note[hidden], .link[hidden] { display: none; }
+
+/* ---------- section heads ---------- */
+.sec-h { display: flex; align-items: baseline; gap: 12px; margin: 30px 0 16px; }
+.sec-h h2 { font: 600 19px/1.3 var(--serif); margin: 0; }
+.sec-h p { margin: 0; color: var(--faint); font-size: 13px; }
+
+/* ---------- cards ---------- */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 34px 22px; }
+.card { position: relative; display: flex; flex-direction: column; cursor: pointer; border-radius: var(--r-lg); outline-offset: 6px; }
+.intro .card { animation: rise .5s var(--ease) both; animation-delay: calc(var(--i, 0) * 28ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+.poster { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: var(--r); overflow: hidden; background: var(--surface-2); }
+.poster img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s var(--ease), filter .3s; }
+.poster::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.55), transparent 42%); pointer-events: none; }
+.poster .play { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; transition: opacity .25s; z-index: 1; }
+.poster .play span { width: 52px; height: 52px; border-radius: 999px; display: grid; place-items: center; background: rgba(18,17,15,.72); backdrop-filter: blur(6px); color: #fff; }
+.card:hover .poster img { transform: scale(1.035); }
+.poster:hover .play { opacity: 1; }
+.chip-on-img { position: absolute; z-index: 1; font-size: 12px; font-weight: 500; line-height: 1; padding: 5px 8px; border-radius: 6px; background: rgba(18,17,15,.78); backdrop-filter: blur(6px); color: #f3efe8; }
+.c-dur { right: 8px; bottom: 8px; font-family: var(--mono); font-size: 11.5px; }
+.c-lang { left: 8px; bottom: 8px; }
+.c-state { left: 8px; top: 8px; }
+.c-state.watched { color: var(--hi); } .c-state.interested { color: var(--mid); }
+.card.is-watched .poster img { filter: saturate(.55) brightness(.8); }
+.c-body { padding: 12px 2px 0; display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.c-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--faint); }
+.score { display: inline-flex; align-items: center; gap: 6px; font: 600 14px/1 var(--mono); color: var(--text); }
+.score::before { content: ""; width: 7px; height: 7px; border-radius: 99px; background: currentColor; color: var(--faint); }
+.score.s-hi::before { background: var(--hi); } .score.s-mid::before { background: var(--mid); } .score.s-lo::before { background: var(--lo); }
+.score.pending { font: 500 12.5px/1 var(--sans); color: var(--muted); }
+.rank { font-family: var(--mono); font-size: 12px; }
+.pill { margin-left: auto; font-size: 11.5px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); white-space: nowrap; }
+.c-title { font-size: 15.5px; font-weight: 600; line-height: 1.42; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.c-tag { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.c-meta { margin: 2px 0 0; font-size: 12.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-meta .ch { color: var(--muted); }
+.acts { display: flex; gap: 4px; margin-top: 10px; }
+.act { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--faint); font-size: 12.5px; transition: color .15s, background .15s, border-color .15s; }
+.act:hover { color: var(--text); background: var(--surface-2); }
+.act .lbl { display: none; }
+.act[aria-pressed="true"] { color: var(--text); background: var(--surface-2); border-color: var(--line-2); }
+.act[aria-pressed="true"] .lbl { display: inline; }
+.act[data-k="watched"][aria-pressed="true"] svg { color: var(--hi); }
+.act[data-k="interested"][aria-pressed="true"] svg { color: var(--mid); }
+.act[data-k="not_interested"][aria-pressed="true"] svg { color: var(--lo); }
+
+/* featured */
+.featured { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+.featured[hidden], .sec-h[hidden] { display: none; }
+.feat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px 10px 14px; transition: border-color .2s, transform .3s var(--ease); }
+.feat:hover { border-color: var(--line-2); transform: translateY(-2px); }
+.feat .c-body { padding: 14px 6px 0; }
+.feat .c-title { font-size: 16.5px; }
+.feat .c-tag { -webkit-line-clamp: 3; color: #cfc9bf; }
+.feat .praise { margin: 4px 0 0; font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.feat .acts { padding: 0 2px; }
+
+.empty { grid-column: 1 / -1; color: var(--muted); padding: 60px 0; text-align: center; }
+
+/* ---------- dialogs ---------- */
+dialog { border: 0; padding: 0; color: var(--text); background: transparent; max-width: none; max-height: none; }
+dialog::backdrop { background: rgba(8,7,6,.66); backdrop-filter: blur(3px); }
+dialog[open] .panel { animation: pop .28s var(--ease); }
+@keyframes pop { from { opacity: 0; transform: translateY(14px) scale(.985); } }
+.panel { position: relative; background: var(--surface); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+#detail .panel { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
+.d-hero { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); }
+.d-hero img { width: 100%; height: 100%; object-fit: cover; border-radius: 18px 18px 0 0; }
+.d-hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, var(--surface) 2%, transparent 45%); }
+.d-close { position: absolute; z-index: 2; right: 14px; top: 14px; background: rgba(18,17,15,.7); backdrop-filter: blur(6px); border-color: transparent; color: #fff; }
+.d-body { position: relative; padding: 0 28px 26px; margin-top: -54px; z-index: 1; }
+.d-score { display: flex; align-items: baseline; gap: 10px; }
+.d-score .num { font: 700 44px/1 var(--serif); }
+.d-score .of { color: var(--faint); font: 500 13px var(--mono); }
+.d-score .rank { margin-left: 4px; color: var(--muted); }
+.d-score.s-hi .num { color: var(--hi); } .d-score.s-mid .num { color: var(--mid); } .d-score.s-lo .num { color: var(--lo); }
+.d-title { font: 600 21px/1.4 var(--serif); margin: 10px 0 6px; }
+.d-meta { color: var(--muted); font-size: 13.5px; margin: 0; }
+.d-meta a { color: var(--text); border-bottom: 1px solid var(--line-2); }
+.d-tag { font-size: 15.5px; line-height: 1.6; margin: 18px 0 0; padding-left: 14px; border-left: 2px solid var(--accent); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); margin: 20px 0 4px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.stats div { padding: 12px 0; }
+.stats div + div { padding-left: 14px; border-left: 1px solid var(--line); }
+.stats dt { color: var(--faint); font-size: 12px; }
+.stats dd { margin: 2px 0 0; font: 600 15px var(--mono); }
+.stats dd small { color: var(--faint); font-weight: 500; font-size: 11.5px; margin-left: 4px; }
+.why { font-size: 14.5px; line-height: 1.7; color: #d8d2c8; }
+.why ul { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
+.why li { padding: 10px 14px; background: var(--surface-2); border-radius: var(--r); }
+.why p { margin: 12px 0 0; }
+.reasons { margin: 14px 0 0; color: var(--faint); font-size: 13px; }
+.d-sec { margin: 24px 0 8px; font: 600 15px var(--serif); }
+.eps { border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.ep { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 11px 14px; background: transparent; border: 0; border-top: 1px solid var(--line); }
+.ep:first-child { border-top: 0; }
+.ep:hover { background: var(--surface-2); }
+.ep[aria-current="true"] { background: var(--accent-soft); }
+.ep .o { font: 600 13px var(--mono); color: var(--faint); }
+.ep .t { font-size: 14px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.ep .s { display: block; color: var(--faint); font-size: 12px; }
+.d-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.d-acts .act { height: 40px; padding: 0 14px; border-color: var(--line-2); color: var(--muted); font-size: 14px; }
+.d-acts .act .lbl { display: inline; }
+.btn-primary { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 8px; background: var(--accent); color: #1a0e07; font-weight: 600; font-size: 14px; border: 0; margin-right: auto; }
+.btn-primary:hover { filter: brightness(1.08); }
+
+/* sheets (filters / settings) */
+.sheet .panel { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 24px 24px 20px; }
+.sheet h2 { font: 600 19px var(--serif); margin: 0 0 4px; }
+.sheet .sub { color: var(--faint); font-size: 13px; margin: 0 0 6px; }
+.sheet h3 { font-size: 12.5px; font-weight: 500; color: var(--muted); letter-spacing: .3px; margin: 20px 0 10px; }
+.opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.opt { display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--muted); font-size: 13.5px; transition: all .15s; }
+.opt:hover { color: var(--text); border-color: var(--muted); }
+.opt small { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.opt[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
+.opt[aria-pressed="true"] small { color: #6f6a61; }
+.sheet-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.btn-ghost { height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line-2); background: transparent; color: var(--text); font-size: 14px; }
+.btn-ghost:hover { background: var(--surface-2); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); }
+.set-row:first-of-type { border-top: 0; }
+.set-row b { display: block; font-weight: 500; font-size: 14.5px; }
+.set-row span { color: var(--faint); font-size: 12.5px; }
+.state-dot { display: inline-block; width: 7px; height: 7px; border-radius: 9px; background: var(--faint); margin-right: 6px; vertical-align: 1px; }
+.state-dot.on { background: var(--hi); }
+
+/* toast */
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; z-index: 50;
+  background: var(--surface-2); border: 1px solid var(--line-2); color: var(--text); font-size: 13.5px; padding: 10px 16px; border-radius: 999px; box-shadow: 0 12px 40px rgba(0,0,0,.4); transition: opacity .25s, transform .25s var(--ease); max-width: calc(100vw - 32px); }
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+footer { margin: 72px 0 0; padding: 26px 0 44px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12.5px; line-height: 1.8; display: grid; grid-template-columns: 1fr auto; gap: 16px; }
+footer b { color: var(--muted); font-weight: 500; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 980px) {
+  .featured { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(270px, 78%); overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -28px; padding: 2px 28px 8px; scrollbar-width: none; }
+  .featured::-webkit-scrollbar { display: none; }
+  .feat { scroll-snap-align: start; }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  .top { padding: 22px 0 16px; }
+  .brand h1 { font-size: 25px; }
+  .brand p .desc, .feat .praise { display: none; }
+  .feat .c-tag { -webkit-line-clamp: 2; }
+  .toolbar-wrap { margin: 0 -16px; padding: 10px 16px; }
+  .toolbar { grid-template-columns: 1fr 1fr; }
+  .search { grid-column: 1 / -1; }
+  .btn { justify-content: center; }
+  .featured { margin: 0 -16px; padding: 2px 16px 8px; grid-auto-columns: 84%; }
+  .grid { grid-template-columns: 1fr; gap: 18px; }
+  .grid .card { display: grid; grid-template-columns: 42% minmax(0, 1fr); gap: 12px; align-items: start; }
+  .c-body { min-width: 0; }
+  .grid .poster { border-radius: 8px; }
+  .grid .c-body { padding: 0; gap: 3px; }
+  .grid .c-title { font-size: 14.5px; }
+  .grid .c-tag { font-size: 12.5px; }
+  .grid .acts { grid-column: 1 / -1; margin-top: 0; border-top: 1px solid var(--line); padding-top: 6px; }
+  .grid .c-lang { display: none; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stats div:nth-child(3) { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); }
+  .stats div:nth-child(4) { border-top: 1px solid var(--line); }
+  .d-body { padding: 0 18px 20px; }
+  dialog.sheet { margin: auto 0 0; width: 100vw; }
+  .sheet .panel { width: 100vw; border-radius: 18px 18px 0 0; max-height: 82vh; }
+  footer { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <h1>▶️ คลังคลิปน่าดู</h1>
-    <p id="sub"></p>
+  <header class="top">
+    <div class="brand">
+      <h1>คลังคลิป<em>น่าดู</em></h1>
+      <p id="meta"></p>
+    </div>
+    <button type="button" class="icon-btn" id="openSettings" aria-label="ตั้งค่าซิงก์สถานะ" title="ตั้งค่าซิงก์สถานะ">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
   </header>
-  <div class="bar">
-    <input id="q" type="search" placeholder="🔍  ค้นหาชื่อคลิป" aria-label="ค้นหาชื่อคลิป">
-    <select id="s1" aria-label="เรียงตาม"></select>
-    <select id="s2" aria-label="แล้วตาม"></select>
+
+  <nav class="tabs" id="langTabs" role="tablist" aria-label="ภาษาเสียงของคลิป" hidden></nav>
+
+  <div class="toolbar-wrap" id="toolbarWrap">
+    <div class="toolbar">
+      <label class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" class="field" type="search" placeholder="ค้นหาชื่อเรื่อง" aria-label="ค้นหาชื่อเรื่อง" autocomplete="off">
+      </label>
+      <button type="button" class="btn" id="openFilters">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        ตัวกรอง <span class="n" id="nFilters"></span>
+      </button>
+      <select id="s1" class="field" aria-label="เรียงตาม"></select>
+    </div>
   </div>
-  <div class="chips tabs" id="langTabs" aria-label="ภาษาเสียงของคลิป"></div>
+  <div class="resultline"><span id="count"></span><button type="button" class="link" id="resetFilters" hidden>ล้างตัวกรอง</button></div>
   <p class="note" id="tabNote" hidden></p>
-  <div class="chips" id="statusChips" aria-label="กรองตามสถานะ"></div>
-  <div class="chips" id="channelChips" aria-label="กรองตามช่อง"></div>
-  <div class="chips"><button type="button" class="chip" id="resetFilters" title="ตัวกรองและการเรียงจะถูกจำไว้ในเบราว์เซอร์นี้">↺ ล้างตัวกรองกลับค่าเริ่มต้น</button></div>
-  <div class="chips"><button type="button" class="chip" id="setToken">☁️ ตั้งค่าซิงก์อัตโนมัติ</button><button type="button" class="chip" id="copyLink">🔗 คัดลอกลิงก์ส่วนตัวสำหรับเครื่องอื่น</button><span id="syncMsg" role="status"></span></div>
-  <div class="count" id="count"></div>
+
+  <div class="sec-h" id="featHead" hidden><h2>ควรดูก่อน</h2><p>สามอันดับแรกที่คุณยังไม่ได้ดู</p></div>
+  <section class="featured" id="featured" hidden></section>
+  <div class="sec-h" id="gridHead"><h2 id="gridTitle">ทุกเรื่อง</h2></div>
   <main class="grid" id="grid"></main>
+
   <footer>
-    คะแนนและเหตุผลสรุปโดย Claude จากคอมเมนต์ของผู้ชม · สถานะ ดูแล้ว / สนใจ / ไม่สนใจ บันทึกไว้ในเบราว์เซอร์นี้ ซิงก์ข้ามเครื่องอัตโนมัติเมื่อเปิดซิงก์<br>
-    ข้อมูลจาก YouTube Data API · <span id="gen"></span>
+    <div>
+      <b>เกณฑ์คัดคลิป</b> ยาวกว่า 10 ชั่วโมง · ยอดวิว <span id="minViews"></span>+ (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุคลิป) · ไม่นับคลิปที่ลงซ้ำ<br>
+      <b>คะแนน</b> Claude อ่านคอมเมนต์ผู้ชมแล้วสรุปว่าสนุกและดูได้ราบรื่นแค่ไหน · เรื่องเดียวกันหลายฉบับรวมเป็นการ์ดเดียว<br>
+      <b>สถานะ</b> ดูแล้ว / สนใจ / ไม่สนใจ บันทึกในเบราว์เซอร์นี้ และซิงก์ข้ามเครื่องเมื่อเปิดซิงก์
+    </div>
+    <div>ข้อมูลจาก YouTube Data API · <span id="gen"></span></div>
   </footer>
 </div>
+
+<dialog id="detail" aria-label="รายละเอียดคลิป"><div class="panel" id="detailPanel"></div></dialog>
+
+<dialog id="filters" class="sheet" aria-labelledby="fTitle">
+  <div class="panel">
+    <h2 id="fTitle">ตัวกรอง</h2>
+    <p class="sub">ตัวกรองถูกจำไว้ในเบราว์เซอร์นี้</p>
+    <h3>สถานะ</h3><div class="opts" id="statusOpts"></div>
+    <h3>ช่อง <span id="chHint" style="color:var(--faint)">— ไม่เลือก = ทุกช่อง</span></h3><div class="opts" id="channelOpts"></div>
+    <div class="sheet-foot"><button type="button" class="link" id="fReset">ล้างทั้งหมด</button><button type="button" class="btn-ghost" id="fDone">เสร็จ</button></div>
+  </div>
+</dialog>
+
+<dialog id="settings" class="sheet" aria-labelledby="sTitle">
+  <div class="panel">
+    <h2 id="sTitle">ซิงก์สถานะข้ามเครื่อง</h2>
+    <p class="sub">สถานะ ดูแล้ว / สนใจ / ไม่สนใจ ตามไปทุกเครื่องที่เปิดซิงก์</p>
+    <div class="set-row"><div><b id="syncState"></b><span>ตั้งรหัสซิงก์ครั้งเดียวต่อเครื่อง หรือเปิดลิงก์ส่วนตัวจากเครื่องที่ตั้งไว้แล้ว</span></div><button type="button" class="btn-ghost" id="setToken">ตั้งรหัส</button></div>
+    <div class="set-row"><div><b>ลิงก์ส่วนตัวสำหรับเครื่องอื่น</b><span>เปิดลิงก์นี้บนเครื่องอื่นครั้งเดียว สถานะจะตามไปเอง (อย่าแชร์ให้คนอื่น)</span></div><button type="button" class="btn-ghost" id="copyLink">คัดลอก</button></div>
+    <div class="sheet-foot"><span></span><button type="button" class="btn-ghost" id="sDone">ปิด</button></div>
+  </div>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
 <script>
 const DATA = /*__DATA__*/null;
-const STATUS = { watched: "✅ ดูแล้ว", interested: "⭐ สนใจ", not_interested: "🚫 ไม่สนใจ" };
-const STATUS_FILTER = { none: "ยังไม่เลือก", interested: "⭐ สนใจ", watched: "✅ ดูแล้ว", not_interested: "🚫 ไม่สนใจ" };
+const STATUS = { watched: "ดูแล้ว", interested: "สนใจ", not_interested: "ไม่สนใจ" };
+const STATUS_FILTER = { none: "ยังไม่เลือก", interested: "สนใจ", watched: "ดูแล้ว", not_interested: "ไม่สนใจ" };
+const ICON = {
+  watched: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+  interested: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>',
+  not_interested: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="m6 6 12 12"/></svg>',
+  play: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
+  close: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+};
 const SORTS = {
   rank: ["อันดับของ Claude", v => v.rank ?? 1e9, 1],
+  pub: ["ใหม่ล่าสุด", v => v.pubTs, -1],
   views: ["ยอดวิวมากสุด", v => v.views ?? -1, -1],
-  vpd: ["วิวต่อวันมากสุด", v => v.vpd, -1],
+  vpd: ["กำลังมาแรง (วิวต่อวัน)", v => v.vpd, -1],
   likes: ["ไลก์มากสุด", v => v.likes ?? -1, -1],
   comments: ["คอมเมนต์มากสุด", v => v.comments ?? -1, -1],
-  pub: ["ใหม่ล่าสุด", v => v.pubTs, -1],
   dur: ["ยาวที่สุด", v => v.dur, -1],
 };
 const KEY = "yt-library-status-v1";
@@ -122,7 +353,11 @@ const DECODE = { w: "watched", i: "interested", n: "not_interested" };
 // เครื่องที่ยังไม่เคยกดอะไร เริ่มจากสถานะตั้งต้นที่ฝังมากับหน้าเว็บ (ส่งออกจาก DB ตอน build)
 const hasSaved = (() => { try { return localStorage.getItem(KEY) !== null; } catch { return true; } })();
 let statusMap = hasSaved ? store.get() : { ...(DATA.baseline || {}) };
-function syncMsg(t) { const m = document.getElementById("syncMsg"); m.textContent = t; setTimeout(() => { m.textContent = ""; }, 6000); }
+let toastTimer = null;
+function syncMsg(t) {
+  const m = document.getElementById("toast"); m.textContent = t; m.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => m.classList.remove("show"), 4200);
+}
 // ลิงก์ที่ติดสถานะมา (#s=id.w~id.i) = สถานะล่าสุดจากอีกเครื่อง แทนที่ของเครื่องนี้ทั้งหมด
 const fromHash = new URLSearchParams(location.hash.slice(1)).get("s");
 if (fromHash !== null) {
@@ -137,7 +372,7 @@ document.getElementById("copyLink").onclick = async () => {
   const enc = Object.entries(statusMap).filter(([, k]) => CODE[k]).map(([id, k]) => `${id}.${CODE[k]}`).join("~");
   const base = location.origin + location.pathname + location.search;
   const url = key ? base + "#k=" + key : base + "#s=" + enc;   // มีรหัสซิงก์ = ลิงก์เปิดซิงก์ให้เครื่องอื่น · ไม่มี = ลิงก์ย้ายสถานะครั้งเดียว
-  try { await navigator.clipboard.writeText(url); syncMsg(key ? "คัดลอกลิงก์ส่วนตัวแล้ว (อย่าแชร์ให้คนอื่น) เปิดในเครื่องอื่นครั้งเดียวก็ซิงก์อัตโนมัติ" : "คัดลอกลิงก์แล้ว เปิดลิงก์นี้ในเครื่องอื่นได้เลย"); }
+  try { await navigator.clipboard.writeText(url); syncMsg(key ? "คัดลอกลิงก์ส่วนตัวแล้ว อย่าแชร์ให้คนอื่น" : "คัดลอกลิงก์แล้ว เปิดลิงก์นี้ในเครื่องอื่นได้เลย"); }
   catch { prompt("คัดลอกลิงก์นี้ไปเปิดในเครื่องอื่น", url); }
 };
 // ---- ซิงก์สถานะข้ามเครื่องอัตโนมัติ: เก็บในระบบหลังบ้านของเจ้าของเว็บเอง (Cloudflare Worker + KV ฟรี)
@@ -162,7 +397,11 @@ let pushTimer = null, syncing = false;
 function saveTs() { ls.set(TS_KEY, JSON.stringify(tsMap)); }
 function touch(id) { tsMap[id] = Date.now(); saveTs(); schedulePush(); }
 function syncOn() { return !!ls.get(SYNC_KEY); }
-function renderSyncBtn() { document.getElementById("setToken").textContent = syncOn() ? "☁️ ซิงก์อัตโนมัติ: เปิดอยู่" : "☁️ ซิงก์อัตโนมัติ: ยังไม่เปิดในเครื่องนี้"; }
+function renderSyncBtn() {
+  document.getElementById("syncState").innerHTML = syncOn()
+    ? '<span class="state-dot on"></span>ซิงก์อัตโนมัติเปิดอยู่' : '<span class="state-dot"></span>เครื่องนี้ยังไม่เปิดซิงก์';
+  document.getElementById("setToken").textContent = syncOn() ? "เปลี่ยน / ปิด" : "ตั้งรหัส";
+}
 async function fetchRemote() {
   const r = await fetch(SYNC.url + "?_=" + Date.now(), { cache: "no-store" });
   if (!r.ok) throw new Error("อ่านไม่ได้ (" + r.status + ")");
@@ -189,11 +428,11 @@ async function pull() {
     const { changed, differs } = mergeRemote(await fetchRemote());
     store.set(statusMap); saveTs();
     if (changed) render();
-    if (differs) schedulePush(); else if (syncOn()) syncMsg("☁️ ซิงก์แล้ว");
-  } catch (e) { syncMsg("ซิงก์ไม่ได้ ใช้ค่าในเครื่องนี้ไปก่อน (" + e.message + ")"); }
+    if (differs) schedulePush();
+  } catch (e) { if (syncOn()) syncMsg("ซิงก์ไม่ได้ ใช้ค่าในเครื่องนี้ไปก่อน (" + e.message + ")"); }
 }
 function schedulePush() {
-  if (!syncOn()) { syncMsg("บันทึกในเครื่องนี้แล้ว · เครื่องนี้ยังไม่ได้เปิดซิงก์ เครื่องอื่นจึงยังไม่เห็น"); return; }
+  if (!syncOn()) return;   // ยังไม่เปิดซิงก์: บันทึกในเครื่องนี้อย่างเดียว (ดูสถานะได้ในเมนูตั้งค่า)
   clearTimeout(pushTimer); pushTimer = setTimeout(push, 1000);
 }
 async function push() {
@@ -211,7 +450,6 @@ async function push() {
     for (const id of Object.keys(out)) if (!tsMap[id]) tsMap[id] = 1;
     const { changed } = mergeRemote((await r.json()).items || {});   // เซิร์ฟเวอร์รวมให้แล้ว: รับของเครื่องอื่นที่ใหม่กว่ากลับมา
     store.set(statusMap); saveTs(); if (changed) render();
-    syncMsg("☁️ ซิงก์แล้ว");
   } catch (e) { syncMsg("ซิงก์ไม่สำเร็จ: " + e.message); }
   syncing = false;
 }
@@ -235,7 +473,7 @@ function loadFilters() {
   return {
     q: "",
     s1: f.s1 in SORTS ? f.s1 : DEFAULT_FILTERS.s1,
-    s2: f.s2 === "" || f.s2 in SORTS ? f.s2 : "",
+    s2: "",   // เรียงชั้นที่สองถูกถอดออกจากหน้าเว็บแล้ว (2026-11-02) — เสมอกันใช้อันดับของ Claude
     statuses: new Set((Array.isArray(f.statuses) ? f.statuses : DEFAULT_FILTERS.statuses).filter(k => k in STATUS_FILTER)),
     channels: new Set((Array.isArray(f.channels) ? f.channels : []).filter(c => allCh.has(c))),  // ช่องที่ไม่มีแล้วตัดทิ้ง
   };
@@ -244,17 +482,24 @@ function saveFilters() {
   ls.set(FILTER_KEY, JSON.stringify({ s1: state.s1, s2: state.s2, statuses: [...state.statuses], channels: [...state.channels] }));
 }
 const state = loadFilters();
-// แท็บภาษา: เปิดหน้าเว็บมาเจอคลิปพากย์ไทยเสมอ (ไม่จำค่า) · คลิปเสียงภาษาอื่นต้องกดแท็บ 🌐 ก่อนจึงจะแสดง
+// แท็บภาษา: เปิดหน้าเว็บมาเจอคลิปพากย์ไทยเสมอ (ไม่จำค่า) · คลิปเสียงภาษาอื่นต้องกดแท็บก่อนจึงจะแสดง
 state.tab = "th";
 const inTab = v => v.foreign === (state.tab === "other");
+const isDefaultStatuses = () => state.statuses.size === DEFAULT_FILTERS.statuses.length && DEFAULT_FILTERS.statuses.every(k => state.statuses.has(k));
 
 const now = Date.now();
 for (const v of DATA.videos) {
   v.pubTs = Date.parse(v.pub);
   v.vpd = (v.views ?? 0) / Math.max(1, (now - v.pubTs) / 864e5);
+  v.praise = ((v.summary || "").match(/<li>👍\s*(.*?)<\/li>/) || [])[1] || "";
 }
 const byId = Object.fromEntries(DATA.videos.map(v => [v.id, v]));
+const groups = {};
+for (const v of DATA.videos) if (v.series) (groups[v.series] ??= []).push(v);
+for (const k in groups) groups[k].sort((a, b) => a.order - b.order);
+const episodesOf = v => v.series && groups[v.series].length > 1 ? groups[v.series] : null;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ytUrl = id => `https://www.youtube.com/watch?v=${id}`;
 
 function shortNum(n) {
   if (n == null) return "–";
@@ -270,143 +515,232 @@ function timeAgo(ts) {
   }
   return "เมื่อสักครู่";
 }
+const hours = d => (d / 3600).toFixed(d >= 36000 ? 0 : 1) + " ชม.";
 const scoreClass = s => s >= 75 ? "s-hi" : s >= 50 ? "s-mid" : "s-lo";
+const rankText = v => v.rank ? `#${v.rank}` : "";
 
-function chip(label, on, onClick) {
-  const b = document.createElement("button");
-  b.className = "chip" + (on ? " on" : ""); b.textContent = label; b.type = "button";
-  b.setAttribute("aria-pressed", on); b.onclick = onClick;
-  return b;
+// ---------- status ----------
+function setStatus(id, k) {
+  if (statusMap[id] === k) delete statusMap[id]; else statusMap[id] = k;
+  store.set(statusMap); touch(id);
+  render();
+  if (document.getElementById("detail").open && detailId === id) openDetail(id);
 }
-function renderChips() {
-  const tabs = document.getElementById("langTabs"); tabs.replaceChildren();
-  const nOther = DATA.videos.filter(v => v.foreign).length;
-  if (nOther) {
-    const labels = [...new Set(DATA.videos.filter(v => v.foreign).map(v => v.langLabel))].join(", ");
-    for (const [k, label] of [["th", `🇹🇭 พากย์ไทย (${DATA.videos.length - nOther})`], ["other", `🌐 ภาษาอื่น (${nOther})`]]) {
-      tabs.append(chip(label, state.tab === k, () => { state.tab = k; renderChips(); render(); }));
-    }
-    const note = document.getElementById("tabNote");
-    note.hidden = state.tab !== "other";
-    note.textContent = `คลิปที่ไม่ได้พากย์ไทย (${labels}) · คะแนนมาจากคอมเมนต์ของผู้ชมต่างชาติ · อันดับนับแยกจากแท็บพากย์ไทย`;
-  }
-  const sc = document.getElementById("statusChips"); sc.replaceChildren();
-  for (const [k, label] of Object.entries(STATUS_FILTER)) {
-    sc.append(chip(label, state.statuses.has(k), () => {
-      state.statuses.has(k) ? state.statuses.delete(k) : state.statuses.add(k); renderChips(); render();
-    }));
-  }
-  const cc = document.getElementById("channelChips"); cc.replaceChildren();
-  const channels = [...new Set(DATA.videos.filter(inTab).map(v => v.ch))].sort();
-  if (channels.length < 2) return;
-  for (const c of channels) {
-    cc.append(chip(c, state.channels.has(c), () => {
-      state.channels.has(c) ? state.channels.delete(c) : state.channels.add(c); renderChips(); render();
-    }));
-  }
-}
-
-function sorted(list) {
-  const keys = [state.s1, state.s2].filter(Boolean).filter((k, i, a) => a.indexOf(k) === i);
-  return [...list].sort((a, b) => {
-    for (const k of keys) {
-      const [, f, dir] = SORTS[k]; const d = (f(a) - f(b)) * dir;
-      if (d) return d;
-    }
-    return (a.rank ?? 1e9) - (b.rank ?? 1e9);
-  });
-}
-
-function card(v, episodes) {
+function actButtons(v, withLabels) {
   const st = statusMap[v.id];
-  const url = `https://www.youtube.com/watch?v=${v.id}`;
+  return Object.entries(STATUS).map(([k, l]) =>
+    `<button type="button" class="act" data-act="${k}" data-k="${k}" aria-pressed="${st === k}" title="${l}" aria-label="${l}">${ICON[k]}<span class="lbl">${l}</span></button>`).join("");
+}
+
+// ---------- cards ----------
+function card(v, i, featured) {
+  const st = statusMap[v.id];
+  const eps = episodesOf(v);
   const el = document.createElement("article");
+  el.className = "card" + (featured ? " feat" : "") + (st === "watched" ? " is-watched" : "");
+  el.tabIndex = 0; el.dataset.id = v.id; el.style.setProperty("--i", Math.min(i, 24));
+  el.setAttribute("aria-label", v.title);
   el.innerHTML = `
-    <a class="thumb" href="${url}" target="_blank" rel="noopener">
-      <img src="${esc(v.thumb)}" alt="" loading="lazy">
-      ${v.rank ? `<span class="badge b-rank">#${v.rank}</span>` : ""}
-      ${v.score != null ? `<span class="badge b-score ${scoreClass(v.score)}">${Math.round(v.score)}</span>` : `<span class="badge b-pending">⏳ รอคะแนน</span>`}
-      ${v.foreign ? `<span class="badge b-lang">🌐 ${esc(v.langLabel)}</span>` : ""}
-      <span class="badge b-dur">${v.durText}</span>
+    <a class="poster" href="${ytUrl(v.id)}" target="_blank" rel="noopener" aria-label="เปิดบน YouTube: ${esc(v.title)}">
+      <img src="${esc(v.thumb)}" alt="" loading="${i < 8 ? "eager" : "lazy"}" decoding="async">
+      <span class="play"><span>${ICON.play}</span></span>
+      ${featured && v.rank ? `<span class="chip-on-img c-state">อันดับ ${v.rank}</span>` : ""}
+      ${!featured && st && st !== "not_interested" ? `<span class="chip-on-img c-state ${st}">${STATUS[st]}</span>` : ""}
+      ${v.foreign ? `<span class="chip-on-img c-lang">${esc(v.langLabel)}</span>` : ""}
+      <span class="chip-on-img c-dur">${v.durText}</span>
     </a>
-    <div class="title"><a href="${url}" target="_blank" rel="noopener" title="${esc(v.title)}">${esc(v.title)}</a></div>
-    <div class="meta"><a class="ch" href="${esc(v.chUrl)}" target="_blank" rel="noopener">${esc(v.ch)}</a><br>
-      ยอดดู ${shortNum(v.views)} ครั้ง · ${timeAgo(v.pubTs)} · 👍 ${shortNum(v.likes)} · 💬 ${shortNum(v.comments)}</div>
-    ${v.summary ? `<details><summary>ทำไมได้คะแนนนี้</summary><div class="why">${v.summary}
-      ${v.reasons ? `<p class="reasons">${v.reasons}</p>` : ""}</div></details>` : ""}
-    ${episodes ? `<details><summary>📚 เรื่องนี้มี ${episodes.length} คลิป (ภาคต่อ/ฉบับอื่น)</summary>
-      ${episodes.map(e => `<div class="ep"><a href="https://www.youtube.com/watch?v=${e.id}" target="_blank" rel="noopener">${e.order}. ${esc(e.title)}</a>${e.id === v.id ? '<span class="here">◀ การ์ดนี้</span>' : ""}<br>
-        <span>${e.foreign ? `🌐 ${esc(e.langLabel)} · ` : ""}${esc(e.ch)} · ${e.durText} · ยอดดู ${shortNum(e.views)}${e.score != null ? ` · คะแนน <b>${Math.round(e.score)}</b>` : ""}${e.rank ? ` · อันดับ #${e.rank}${e.foreign ? " (แท็บภาษาอื่น)" : ""}` : ""}</span></div>`).join("")}
-    </details>` : ""}
-    <div class="status" role="group" aria-label="สถานะ">
-      ${Object.entries(STATUS).map(([k, l]) => `<button type="button" data-k="${k}" class="${st === k ? "on" : ""}" aria-pressed="${st === k}">${l}</button>`).join("")}
-    </div>`;
-  el.querySelectorAll(".status button").forEach(b => b.onclick = () => {
-    const k = b.dataset.k;
-    if (statusMap[v.id] === k) delete statusMap[v.id]; else statusMap[v.id] = k;
-    store.set(statusMap); touch(v.id);
-    if (!state.statuses.has(statusMap[v.id] ?? "none")) render();
-    else el.querySelectorAll(".status button").forEach(x => {
-      const on = statusMap[v.id] === x.dataset.k; x.classList.toggle("on", on); x.setAttribute("aria-pressed", on);
-    });
-  });
+    <div class="c-body">
+      <div class="c-row">
+        ${v.score != null ? `<span class="score ${scoreClass(v.score)}">${Math.round(v.score)}</span>` : `<span class="score pending">รอคะแนน</span>`}
+        ${!featured && v.rank ? `<span class="rank">${rankText(v)}</span>` : ""}
+        ${eps ? `<span class="pill">${eps.length} ฉบับ</span>` : ""}
+      </div>
+      <h3 class="c-title">${esc(v.title)}</h3>
+      ${v.tag ? `<p class="c-tag">${v.tag}</p>` : ""}
+      ${featured && v.praise ? `<p class="praise">${v.praise}</p>` : ""}
+      <p class="c-meta"><span class="ch">${esc(v.ch)}</span> · ${shortNum(v.views)} วิว · ${timeAgo(v.pubTs)}</p>
+    </div>
+    <div class="acts">${actButtons(v)}</div>`;
   return el;
 }
 
+function sorted(list) {
+  const [, f, dir] = SORTS[state.s1];
+  return [...list].sort((a, b) => ((f(a) - f(b)) * dir) || ((a.rank ?? 1e9) - (b.rank ?? 1e9)));
+}
+
+let firstRender = true;
 function render() {
   saveFilters();
   const q = state.q.trim().toLowerCase();
   const tabVideos = DATA.videos.filter(inTab);
   // ช่องที่เลือกไว้ในอีกแท็บไม่มีผลกับแท็บนี้ (ไม่อย่างนั้นสลับแท็บแล้วจะว่างเปล่า)
   const chSel = new Set(tabVideos.map(v => v.ch).filter(c => state.channels.has(c)));
-  let list = tabVideos.filter(v =>
+  const list = sorted(tabVideos.filter(v =>
     state.statuses.has(statusMap[v.id] ?? "none") &&
     (!chSel.size || chSel.has(v.ch)) &&
-    (!q || v.title.toLowerCase().includes(q)));
-  list = sorted(list);
-  // one card per story: the best-placed clip in the current order; all clips behind a dropdown
-  const groups = {};
-  for (const v of DATA.videos) if (v.series) (groups[v.series] ??= []).push(v);
-  for (const k in groups) groups[k].sort((a, b) => a.order - b.order);
+    (!q || v.title.toLowerCase().includes(q) || (v.tag || "").toLowerCase().includes(q))));
+  // one card per story: the best-placed clip in the current order; all clips are listed in the detail dialog
   const seen = new Set();
-  const cards = list.filter(v => {
-    if (!v.series || groups[v.series].length < 2) return true;
+  let cards = list.filter(v => {
+    if (!episodesOf(v)) return true;
     if (seen.has(v.series)) return false;
     seen.add(v.series); return true;
   });
-  const grid = document.getElementById("grid"); grid.replaceChildren();
-  document.getElementById("count").textContent = `แสดง ${cards.length} การ์ด (${list.length} คลิป) จากทั้งหมด ${tabVideos.length} คลิป${state.tab === "other" ? "ในแท็บภาษาอื่น" : ""}`;
-  if (!cards.length) { grid.innerHTML = '<div class="empty">ไม่พบคลิปตามตัวกรองนี้</div>'; return; }
-  for (const v of cards) grid.append(card(v, v.series && groups[v.series].length > 1 ? groups[v.series] : null));
+  const filtersOn = (isDefaultStatuses() ? 0 : 1) + (chSel.size ? 1 : 0);
+  document.getElementById("nFilters").textContent = filtersOn || "";
+  document.getElementById("resetFilters").hidden = !filtersOn && state.s1 === DEFAULT_FILTERS.s1 && !q;
+
+  // "ควรดูก่อน": 3 อันดับแรกที่ยังไม่ได้ดู — เฉพาะตอนเรียงตามอันดับ ไม่ค้นหา ไม่กรองช่อง และยังแสดงคลิปที่ยังไม่เลือกสถานะ
+  const showFeat = state.s1 === "rank" && !q && !chSel.size && state.statuses.has("none");
+  const feat = showFeat ? cards.filter(v => v.score != null && !["watched", "not_interested"].includes(statusMap[v.id])).slice(0, 3) : [];
+  const featIds = new Set(feat.map(v => v.id));
+  const fs = document.getElementById("featured"); fs.replaceChildren();
+  feat.forEach((v, i) => fs.append(card(v, i, true)));
+  fs.hidden = document.getElementById("featHead").hidden = !feat.length;
+  cards = cards.filter(v => !featIds.has(v.id));
+
+  document.getElementById("gridTitle").textContent = feat.length ? "เรื่องอื่นๆ" : q ? `ผลการค้นหา “${state.q.trim()}”` : "ทุกเรื่อง";
+  document.getElementById("count").textContent =
+    `${cards.length + feat.length} เรื่อง (${list.length} คลิป) จาก ${tabVideos.length} คลิป${state.tab === "other" ? "ในแท็บภาษาอื่น" : ""}`;
+  const grid = document.getElementById("grid");
+  grid.classList.toggle("intro", firstRender); firstRender = false;
+  grid.replaceChildren();
+  if (!cards.length && !feat.length) { grid.innerHTML = '<div class="empty">ไม่พบเรื่องตามตัวกรองนี้</div>'; return; }
+  cards.forEach((v, i) => grid.append(card(v, i, false)));
+}
+
+// clicks on cards: status buttons / poster link / anywhere else = details
+function onCardClick(e) {
+  const c = e.target.closest(".card"); if (!c) return;
+  const act = e.target.closest("[data-act]");
+  if (act) { e.preventDefault(); setStatus(c.dataset.id, act.dataset.act); return; }
+  if (e.target.closest("a")) return;
+  openDetail(c.dataset.id);
+}
+for (const id of ["grid", "featured"]) {
+  const el = document.getElementById(id);
+  el.addEventListener("click", onCardClick);
+  el.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.classList.contains("card")) openDetail(e.target.dataset.id); });
+}
+
+// ---------- detail dialog ----------
+let detailId = null;
+function openDetail(id) {
+  const v = byId[id]; if (!v) return;
+  detailId = id;
+  const eps = episodesOf(v);
+  const likePct = v.views ? (100 * (v.likes ?? 0) / v.views).toFixed(2) : null;
+  const p = document.getElementById("detailPanel");
+  p.innerHTML = `
+    <div class="d-hero"><img src="${esc(v.thumb)}" alt=""><button type="button" class="icon-btn d-close" data-close aria-label="ปิด">${ICON.close}</button></div>
+    <div class="d-body">
+      ${v.score != null ? `<div class="d-score ${scoreClass(v.score)}"><span class="num">${Math.round(v.score)}</span><span class="of">/100</span>${v.rank ? `<span class="rank">อันดับ ${rankText(v)}${v.foreign ? " ในแท็บภาษาอื่น" : ""}</span>` : ""}</div>`
+        : `<div class="d-score"><span class="of">ยังไม่มีคะแนน</span></div>`}
+      <h2 class="d-title">${esc(v.title)}</h2>
+      <p class="d-meta"><a href="${esc(v.chUrl)}" target="_blank" rel="noopener">${esc(v.ch)}</a> · ลงเมื่อ ${timeAgo(v.pubTs)}${v.foreign ? ` · ${esc(v.langLabel)}` : ""}</p>
+      ${v.tag ? `<p class="d-tag">${v.tag}</p>` : ""}
+      <dl class="stats">
+        <div><dt>ความยาว</dt><dd>${v.durText}</dd></div>
+        <div><dt>ยอดวิว</dt><dd>${shortNum(v.views)}</dd></div>
+        <div><dt>ไลก์</dt><dd>${shortNum(v.likes)}${likePct ? `<small>${likePct}%</small>` : ""}</dd></div>
+        <div><dt>คอมเมนต์</dt><dd>${shortNum(v.comments)}</dd></div>
+      </dl>
+      ${v.summary ? `<div class="why">${v.summary}</div>` : ""}
+      ${v.reasons ? `<p class="reasons">${v.reasons}</p>` : ""}
+      ${eps ? `<h3 class="d-sec">เรื่องนี้มี ${eps.length} ฉบับ (ภาคต่อ / ช่องอื่น)</h3><div class="eps">${eps.map(e => `
+        <button type="button" class="ep" data-ep="${e.id}" aria-current="${e.id === v.id}">
+          <span class="o">${e.order}</span>
+          <span><span class="t">${esc(e.title)}</span><span class="s">${e.foreign ? esc(e.langLabel) + " · " : ""}${esc(e.ch)} · ${e.durText} · ${shortNum(e.views)} วิว${e.rank ? ` · ${rankText(e)}` : ""}</span></span>
+          ${e.score != null ? `<span class="score ${scoreClass(e.score)}">${Math.round(e.score)}</span>` : ""}
+        </button>`).join("")}</div>` : ""}
+      <div class="d-acts">
+        <a class="btn-primary" href="${ytUrl(v.id)}" target="_blank" rel="noopener">${ICON.play} ดูบน YouTube</a>
+        ${actButtons(v, true)}
+      </div>
+    </div>`;
+  const d = document.getElementById("detail");
+  if (!d.open) d.showModal();
+  p.scrollTop = 0;
+}
+document.getElementById("detail").addEventListener("click", e => {
+  const d = e.currentTarget;
+  if (e.target === d || e.target.closest("[data-close]")) { d.close(); return; }
+  const act = e.target.closest("[data-act]"); if (act) { setStatus(detailId, act.dataset.act); return; }
+  const ep = e.target.closest("[data-ep]"); if (ep && ep.dataset.ep !== detailId) openDetail(ep.dataset.ep);
+});
+
+// ---------- filters / settings dialogs ----------
+function opt(label, count, on, onClick) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "opt"; b.setAttribute("aria-pressed", on);
+  b.innerHTML = esc(label) + (count != null ? ` <small>${count}</small>` : "");
+  b.onclick = onClick; return b;
+}
+function renderFilterOpts() {
+  const tabVideos = DATA.videos.filter(inTab);
+  const so = document.getElementById("statusOpts"); so.replaceChildren();
+  for (const [k, label] of Object.entries(STATUS_FILTER)) {
+    const n = tabVideos.filter(v => (statusMap[v.id] ?? "none") === k).length;
+    so.append(opt(label, n, state.statuses.has(k), () => {
+      state.statuses.has(k) ? state.statuses.delete(k) : state.statuses.add(k); renderFilterOpts(); render();
+    }));
+  }
+  const co = document.getElementById("channelOpts"); co.replaceChildren();
+  const counts = {};
+  for (const v of tabVideos) counts[v.ch] = (counts[v.ch] || 0) + 1;
+  for (const c of Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))) {
+    co.append(opt(c, counts[c], state.channels.has(c), () => {
+      state.channels.has(c) ? state.channels.delete(c) : state.channels.add(c); renderFilterOpts(); render();
+    }));
+  }
+}
+function resetAll() {
+  state.s1 = DEFAULT_FILTERS.s1; state.statuses = new Set(DEFAULT_FILTERS.statuses); state.channels = new Set(); state.q = "";
+  document.getElementById("s1").value = state.s1; document.getElementById("q").value = "";
+}
+const dlg = id => document.getElementById(id);
+dlg("openFilters").onclick = () => { renderFilterOpts(); dlg("filters").showModal(); };
+dlg("fDone").onclick = () => dlg("filters").close();
+dlg("fReset").onclick = () => { resetAll(); renderFilterOpts(); render(); };
+dlg("openSettings").onclick = () => { renderSyncBtn(); dlg("settings").showModal(); };
+dlg("sDone").onclick = () => dlg("settings").close();
+for (const id of ["filters", "settings"]) dlg(id).addEventListener("click", e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+dlg("resetFilters").onclick = () => { resetAll(); render(); };
+
+function renderTabs() {
+  const tabs = dlg("langTabs");
+  const nOther = DATA.videos.filter(v => v.foreign).length;
+  tabs.hidden = !nOther; if (!nOther) return;
+  tabs.replaceChildren();
+  for (const [k, label, n] of [["th", "พากย์ไทย", DATA.videos.length - nOther], ["other", "ภาษาอื่น", nOther]]) {
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", state.tab === k);
+    b.innerHTML = `${label}<span>${n}</span>`;
+    b.onclick = () => { state.tab = k; firstRender = true; renderTabs(); render(); };
+    tabs.append(b);
+  }
+  const note = dlg("tabNote");
+  note.hidden = state.tab !== "other";
+  const labels = [...new Set(DATA.videos.filter(v => v.foreign).map(v => v.langLabel))].join(", ");
+  note.textContent = `คลิปที่ไม่ได้พากย์ไทย (${labels}) · คะแนนมาจากคอมเมนต์ของผู้ชมต่างชาติ · อันดับนับแยกจากแท็บพากย์ไทย`;
 }
 
 (function init() {
-  const thai = DATA.videos.filter(v => !v.foreign), nOther = DATA.videos.length - thai.length;
-  const nCh = new Set(thai.map(v => v.ch)).size;
-  const scored = thai.filter(v => v.score != null).length;
-  document.getElementById("sub").innerHTML =
-    `คลิปยาวกว่า <b>10 ชั่วโมง</b> · ยอดวิว <b>${shortNum(DATA.minViews ?? 40000)}+</b> (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุ) · พากย์ไทย <b>${thai.length}</b> คลิป จาก <b>${nCh}</b> ช่อง · Claude ให้คะแนน <b>${scored}</b> คลิป` +
-    (scored < thai.length ? ` · รอคะแนน <b>${thai.length - scored}</b> คลิป` : "") +
-    (nOther ? ` · เสียงภาษาอื่นอีก <b>${nOther}</b> คลิป (อยู่ในแท็บ 🌐)` : "");
-  document.getElementById("gen").textContent = "อัปเดต " + new Date(DATA.generatedAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
-  const s1 = document.getElementById("s1"), s2 = document.getElementById("s2");
-  for (const [k, [l]] of Object.entries(SORTS)) s1.add(new Option("เรียงตาม: " + l, k));
-  s2.add(new Option("แล้วตาม: —", ""));
-  for (const [k, [l]] of Object.entries(SORTS)) s2.add(new Option("แล้วตาม: " + l, k));
-  s1.value = state.s1; s2.value = state.s2;
+  const thai = DATA.videos.filter(v => !v.foreign);
+  const gen = new Date(DATA.generatedAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
+  dlg("meta").innerHTML = `<span class="desc">คลิปยาว 10 ชั่วโมงขึ้นไป คัดและให้คะแนนจากคอมเมนต์ผู้ชม · </span><b>${thai.length}</b> คลิป จาก <b>${new Set(thai.map(v => v.ch)).size}</b> ช่อง · อัปเดต ${gen}`;
+  dlg("gen").textContent = "อัปเดต " + gen;
+  dlg("minViews").textContent = shortNum(DATA.minViews ?? 40000);
+  const s1 = dlg("s1");
+  for (const [k, [l]] of Object.entries(SORTS)) s1.add(new Option(l, k));
+  s1.value = state.s1;
   s1.onchange = () => { state.s1 = s1.value; render(); };
-  s2.onchange = () => { state.s2 = s2.value; render(); };
-  document.getElementById("q").oninput = e => { state.q = e.target.value; render(); };
-  document.getElementById("resetFilters").onclick = () => {
-    const d = loadFiltersDefault();
-    Object.assign(state, d); s1.value = state.s1; s2.value = state.s2;
-    renderChips(); render();
-  };
-  renderChips(); render();
+  dlg("q").oninput = e => { state.q = e.target.value; render(); };
+  const tw = dlg("toolbarWrap");
+  new IntersectionObserver(([e]) => tw.classList.toggle("stuck", e.intersectionRatio < 1), { threshold: [1], rootMargin: "-1px 0px 0px 0px" }).observe(tw);
+  renderTabs(); render();
 })();
-function loadFiltersDefault() {
-  return { s1: DEFAULT_FILTERS.s1, s2: DEFAULT_FILTERS.s2, statuses: new Set(DEFAULT_FILTERS.statuses), channels: new Set() };
-}
 </script>
 </body>
 </html>

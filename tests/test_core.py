@@ -130,3 +130,10 @@ def test_other_language_channels_are_ranked_separately(tmp_path, monkeypatch):
     con.execute("UPDATE channels SET language = 'th' WHERE channel_id = 'Z'")  # manual override wins
     con.commit()
     assert all(not v["foreign"] for v in build_site.load_videos())
+
+
+def test_split_summary_takes_bold_first_line_as_pitch():
+    from build_site import split_summary
+    assert split_summary("**เรื่องสนุก ฮา**\n\n- 👍 ชม") == ("เรื่องสนุก ฮา", "\n- 👍 ชม")
+    assert split_summary("- 👍 ไม่มีหัว") == ("", "- 👍 ไม่มีหัว")
+    assert split_summary(None) == ("", "")
