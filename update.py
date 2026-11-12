@@ -16,6 +16,8 @@ Steps of a full run:
                 and so are same-channel clips that look like parts of one story (ชุดตอน candidates)
   6 publish     build docs/index.html (new clips show as "รอคะแนน"), run tests, commit, push
   7 comments    only for eligible clips that have none yet; quota checked before each clip
+  8 finish      finished stories of 4 h+ outside the library: a 1-unit comment sample per clip, code keeps
+                only lines about an ending -> data/to_score/<time>_finish.md for Claude (done/open/unsure)
   8 pack        data/to_score/<time>_pack.md = scale examples + new clips' comments
   9 report      data/runs/latest.md (+ <time>.md/.log) — exit code 1 when something needs a look
 
@@ -49,6 +51,7 @@ QUOTA_RESERVE = 500            # never plan to spend the last 500 units of the d
 NEW_CHANNEL_MAX_VIDEOS = 500   # first visit of a channel: newest 500 clips (~20 units)
 LOCK_STALE_SECONDS = 6 * 3600
 FULL_SCAN_DAYS = 30            # walk a channel's whole uploads list once a month (~1 unit per 50 clips)
+FINISH_SAMPLE_PER_RUN = 1000   # finish check: at most this many 1-unit comment samples per run
 
 
 class QuotaLow(Exception):
@@ -64,6 +67,7 @@ class Run:
         self.errors: list[str] = []
         self.sections: list[tuple[str, list[str]]] = []
         self.pack: Path | None = None
+        self.finish_pack: Path | None = None
 
     def log(self, msg: str) -> None:
         print(msg, flush=True)
@@ -95,6 +99,10 @@ class Run:
             md += ["## คำเตือน", *[f"- {w}" for w in self.warnings], ""]
         for title, lines in self.sections:
             md += [f"## {title}", *(lines or ["- ไม่มี"]), ""]
+        if self.finish_pack:
+            md += ["## ตรวจเรื่องจบ (ทำก่อนให้คะแนน)",
+                   f"- อ่าน `{self.finish_pack.relative_to(ROOT).as_posix()}` (บรรทัดสั้นๆ) ตอบ done/open/unsure → "
+                   "`python ingest.py finish-verdicts <file>` → `python ingest.py export-scoring` ให้คะแนนเรื่องที่จบ", ""]
         if self.pack:
             md += ["## ขั้นถัดไปสำหรับ Claude", f"- อ่าน `{self.pack.relative_to(ROOT).as_posix()}` แล้วให้คะแนนตามเกณฑ์ใน AGENTS.md",
                    "- `python ingest.py import-scores data/scores/<ไฟล์>.json` → จัดคะแนนเท่ากัน/ซีรีส์ → "
@@ -108,6 +116,7 @@ class Run:
             "status": status, "started": self.started.isoformat(timespec="seconds"),
             "errors": self.errors, "warnings": self.warnings, "units": yt_api.units_used,
             "pack": self.pack.relative_to(ROOT).as_posix() if self.pack else None,
+            "finish_pack": self.finish_pack.relative_to(ROOT).as_posix() if self.finish_pack else None,
             "report": out.relative_to(ROOT).as_posix()}, ensure_ascii=False, indent=1), encoding="utf-8")
         return out
 
@@ -432,7 +441,7 @@ def step_publish(run: Run, message: str) -> None:
 
 def step_comments(con, yt, run: Run) -> None:
     rows = con.execute(f"""SELECT v.video_id, v.title, v.comment_count FROM videos v
-                           WHERE {db.IN_LIBRARY_SQL} AND v.comments_fetched_at IS NULL
+                           WHERE {db.NEEDS_COMMENTS_SQL}
                            ORDER BY v.view_count DESC""").fetchall()
     run.log(f"[7] คลิปเข้าเกณฑ์ที่ยังไม่มีคอมเมนต์ {len(rows)} คลิป")
     for i, r in enumerate(rows, 1):
@@ -446,6 +455,34 @@ def step_comments(con, yt, run: Run) -> None:
     for r in skipped:
         run.warn(f"คลิป `{r['video_id']}` {r['title'][:50]} ดึงคอมเมนต์ไม่ได้ "
                  f"({yt_api.ERROR_TH.get(r['comments_status'], r['comments_status'])}) — ให้คะแนนจากสถิติอย่างเดียว")
+
+
+def step_finish(con, yt, run: Run) -> None:
+    """Finished stories of 4 h+ (user 2026-11-12): a 1-unit comment sample per clip, code keeps only the
+    lines about an ending, Claude judges those lines (finish pack). Each clip is judged once."""
+    cands = [r["video_id"] for r in db.finish_candidates(con)]
+    need = [vid for vid in cands if con.execute(
+        "SELECT 1 FROM videos v LEFT JOIN finish_checks f USING (video_id) WHERE v.video_id = ? "
+        "AND (v.comments_fetched_at IS NULL OR f.video_id IS NOT NULL)", (vid,)).fetchone()]
+    run.log(f"[8] ตรวจเรื่องจบ: คลิป 4 ชม.+ นอกคลังที่ยังไม่เคยตรวจ {len(cands)} คลิป (ต้องดึงคอมเมนต์ {len(need)})")
+    got: list[str] = []
+    if need:
+        try:
+            ensure_budget(con, min(len(need), FINISH_SAMPLE_PER_RUN), "ตัวอย่างคอมเมนต์ตรวจเรื่องจบ")
+            for i in range(0, min(len(need), FINISH_SAMPLE_PER_RUN), 50):
+                chunk = need[i:i + 50]
+                ensure_budget(con, len(chunk), "ตัวอย่างคอมเมนต์ตรวจเรื่องจบ")
+                ingest._fetch_comments_into(con, yt, chunk, lambda m: None, sample=True)
+                got += chunk
+        except (QuotaLow, HttpError) as e:
+            run.warn(str(e) if isinstance(e, QuotaLow) else yt_api.error_message_th(e))
+    ready = [vid for vid in cands if vid not in need or vid in got]
+    lib = ingest.library_unchecked(con)
+    run.finish_pack, n_read, n_none = ingest.finish_triage(con, ready, lib)
+    run.section("ตรวจเรื่องจบ (4 ชม.+ ที่จบจริงเข้าคลังได้)", [
+        f"- ดึงตัวอย่างคอมเมนต์ {len(got)} คลิป (คลิปละ 1 unit) · ไม่มีใครพูดถึงตอนจบ {n_none} คลิป (ตัดทิ้ง ไม่ต้องอ่าน)",
+        f"- รอ Claude ตัดสิน {n_read} คลิป" + (f" → `{run.finish_pack.relative_to(ROOT).as_posix()}`" if run.finish_pack else ""),
+        f"- เหลือรอดึงรอบหน้า {len(need) - len(got)} คลิป" if len(need) > len(got) else "- ไม่มีคลิปค้าง"])
 
 
 def step_pack(con, run: Run, alikes: list[str]) -> None:
@@ -511,6 +548,7 @@ def full_run(con, run: Run, publish: bool, new_channel_max: int) -> None:
             step_comments(con, yt, run)
         except (QuotaLow, HttpError) as e:
             run.warn(str(e) if isinstance(e, QuotaLow) else yt_api.error_message_th(e))
+        step_finish(con, yt, run)
     step_pack(con, run, alikes)
 
 

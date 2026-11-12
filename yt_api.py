@@ -205,6 +205,19 @@ def fetch_all_comments(yt, video_id: str, max_threads: int = 5000) -> list[dict]
     return rows
 
 
+def fetch_comment_sample(yt, video_id: str) -> list[dict]:
+    """1 unit: the 100 most relevant threads with the replies YouTube embeds (no extra reply calls).
+    Enough to judge whether a story ends, and to score a finished story."""
+    resp = _run(yt.commentThreads().list(part="snippet,replies", videoId=video_id, maxResults=100,
+                                         order="relevance", textFormat="plainText"))
+    rows = []
+    for th in resp.get("items", []):
+        top = th["snippet"]["topLevelComment"]
+        rows.append(_comment_row(top, video_id, None, th["snippet"].get("totalReplyCount", 0)))
+        rows += [_comment_row(r, video_id, top["id"]) for r in th.get("replies", {}).get("comments", [])]
+    return rows
+
+
 def _fetch_replies(yt, parent_id: str) -> list[dict]:
     out, token = [], None
     while True:

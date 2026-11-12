@@ -22,6 +22,8 @@
   python ingest.py remove-set <set_id>
   python ingest.py set-finished <file.json>   {"video_id": {"finished": true|false|null, "note": "..."}}
                                        ป้าย "จบแล้ว" จากคอมเมนต์ (ไม่เกี่ยวกับคะแนน)
+  python ingest.py finish-verdicts <file.json>   {"id": ["done"|"open"|"unsure", "เหตุผล"?]}
+                                       ผลตรวจ "เรื่องจบจริง" จาก finish pack (done = เข้าคลังแม้ไม่ถึง 10 ชม.)
   python ingest.py set-duplicate <id> <of> [--clear]
                                        mark a re-upload Claude confirmed (kept across mark_duplicates)
   python ingest.py set-language <channel id|title> <th|zh|en|other|auto>
@@ -111,12 +113,12 @@ def mark_duplicates(con) -> int:
     return marked
 
 
-def _fetch_comments_into(con, yt, video_ids: list[str], log) -> None:
+def _fetch_comments_into(con, yt, video_ids: list[str], log, sample: bool = False) -> None:
     for i, vid in enumerate(video_ids, 1):
         before = yt_api.units_used
         try:
-            rows = yt_api.fetch_all_comments(yt, vid)
-            db.replace_comments(con, vid, rows)
+            rows = yt_api.fetch_comment_sample(yt, vid) if sample else yt_api.fetch_all_comments(yt, vid)
+            db.replace_comments(con, vid, rows, status="sample" if sample else "ok")
             log(f"  คอมเมนต์ {i}/{len(video_ids)}: {vid} ได้ {len(rows)} รายการ "
                 f"({yt_api.units_used - before} units)")
         except HttpError as e:
@@ -152,7 +154,7 @@ def _ensure_channel(con, yt, channel_id: str) -> None:
 
 
 def _missing_comment_ids(con, channel_id: str | None = None) -> list[str]:
-    sql = f"SELECT v.video_id FROM videos v WHERE {db.IN_LIBRARY_SQL} AND v.comments_fetched_at IS NULL"
+    sql = f"SELECT v.video_id FROM videos v WHERE {db.NEEDS_COMMENTS_SQL}"
     args: tuple = ()
     if channel_id:
         sql += " AND v.channel_id = ?"
@@ -533,8 +535,107 @@ def import_scores(con, path: Path) -> int:
                         seen, it.get("tie_rank"), it.get("series"), it.get("series_order"))
         if "finished" in it:
             db.set_finished(con, it["video_id"], it["finished"], it.get("finished_note"))
+        else:  # a story judged finished by finish-verdicts keeps its tag without repeating it here
+            fc = con.execute("SELECT note FROM finish_checks WHERE video_id = ? AND verdict = 'done'",
+                             (it["video_id"],)).fetchone()
+            if fc:
+                db.set_finished(con, it["video_id"], True, fc["note"])
     con.commit()
     return len(items)
+
+
+
+# ---------------------------------------------------------------- เรื่องจบจริง (finish check)
+# Cheap on purpose (user 2026-11-12): code picks at most 8 short lines per clip that talk about an ending,
+# Claude only reads those lines and answers one word per clip. Titles ("ดูจบในตอน!") never count.
+_FIN_TALK = re.compile(r"จบ|ต่อ|ภาค|ซีซั่?น|ss ?\d|season|ค้าง|end", re.I)
+FINISH_LINES = 8
+FINISH_LINE_LEN = 80
+
+
+def _is_uploader(author: str | None, ch) -> bool:
+    a = (author or "").lstrip("@").strip().casefold()
+    return bool(a) and a in {(ch["handle"] or "").lstrip("@").casefold(), (ch["title"] or "").casefold()}
+
+
+def finish_evidence(rows, ch) -> tuple[bool, list[str]]:
+    """(worth reading, lines). Worth reading = a viewer says it ended, or the uploader talks about
+    an ending / next part. Lines: uploader first (2), then the most-liked "ended" lines (3), then the
+    most-liked other ending/continuation talk — each cut to 80 chars, duplicates dropped."""
+    seen, up, done, other = set(), [], [], []
+    for r in sorted(rows, key=lambda r: -(r["like_count"] or 0)):
+        t = _norm(r["text"] or "")
+        if not _FIN_TALK.search(t) or t[:40] in seen:
+            continue
+        seen.add(t[:40])
+        if _is_uploader(r["author"], ch):
+            up.append(f"  [ช่อง] {t[:FINISH_LINE_LEN]}")
+        else:
+            (done if FINISH["done"].search(t) else other).append(f"  [{r['like_count'] or 0}] {t[:FINISH_LINE_LEN]}")
+    if not (up or done):
+        return False, []
+    pick = up[:2] + done[:3]
+    return True, pick + other[:FINISH_LINES - len(pick)]
+
+
+def finish_triage(con, candidates: list[str], library: list[str]) -> tuple[Path | None, int, int]:
+    """Writes the finish pack. Clips with no talk of an ending are settled as nosignal right here
+    (no reading). Returns (pack path or None, clips to read, nosignal)."""
+    blocks: dict[str, list[str]] = {"new": [], "lib": []}
+    n_read = n_none = 0
+    for kind, ids in (("new", candidates), ("lib", library)):
+        for vid in ids:
+            v = con.execute("SELECT v.title, v.duration_seconds, v.view_count, c.title AS ct, c.handle "
+                            "FROM videos v JOIN channels c USING (channel_id) WHERE v.video_id = ?", (vid,)).fetchone()
+            rows = con.execute("SELECT author, text, like_count FROM comments WHERE video_id IN "
+                               "(SELECT video_id FROM set_parts WHERE set_id = ?1 UNION SELECT ?1)", (vid,)).fetchall()
+            worth, lines = finish_evidence(rows, {"title": v["ct"], "handle": v["handle"]})
+            if not worth:
+                db.save_finish_check(con, vid, "nosignal", None, len(rows))
+                n_none += 1
+                continue
+            n_read += 1
+            blocks[kind] += [f"{vid} | {v['duration_seconds'] / 3600:.1f}h | {_short(v['view_count'])} | {_norm(v['title'])[:60]}",
+                             *lines]
+    con.commit()
+    if not n_read:
+        return None, 0, n_none
+    out = ROOT / "data" / "to_score" / f"{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_finish.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join([
+        "# เรื่องจบจริงไหม (ไม่ใช่ให้คะแนน) — อ่านเฉพาะบรรทัดคอมเมนต์ ชื่อคลิปไม่นับเป็นหลักฐาน",
+        "done = ≥2 คนยืนยันว่าเรื่องจบ หรือช่องยืนยัน และไม่มีใครบอกว่ามีต่อ · "
+        "open = จบแค่ซีซั่น/มีภาคต่อ/ตัดจบ/จบห้วน/คนรอตอนต่อ · unsure = หลักฐานไม่พอ (= ไม่จบ)",
+        'ตอบ JSON {"id": ["done", "เหตุผลสั้นๆ ที่จะแสดงบนเว็บ"], "id2": ["open"], "id3": ["unsure"]} '
+        "→ python ingest.py finish-verdicts <file>", "",
+        f"## คลิปนอกคลัง 4 ชม.+ (done = เข้าคลัง) {sum(1 for l in blocks['new'] if not l.startswith(' '))}",
+        *blocks["new"], "",
+        f"## เรื่องในคลัง (done = ป้ายจบแล้ว) {sum(1 for l in blocks['lib'] if not l.startswith(' '))}",
+        *blocks["lib"], ""]), encoding="utf-8")
+    return out, n_read, n_none
+
+
+def library_unchecked(con) -> list[str]:
+    """Scored library units whose ending was never judged (no tag decision, no finish check)."""
+    return [r[0] for r in con.execute(f"""SELECT v.video_id FROM videos v JOIN scores s USING (video_id)
+        WHERE {db.ELIGIBLE_SQL} AND s.finished IS NULL AND v.comments_fetched_at IS NOT NULL
+          AND v.video_id NOT IN (SELECT video_id FROM finish_checks)""")]
+
+
+def import_finish_verdicts(con, m: dict) -> dict[str, int]:
+    """{"id": ["done"|"open"|"unsure", note?]} -> finish_checks; scored units also get their tag."""
+    n = {"done": 0, "open": 0, "unsure": 0}
+    for vid, val in m.items():
+        verdict, note = (val, None) if isinstance(val, str) else (val[0], val[1] if len(val) > 1 else None)
+        if verdict not in n:
+            raise ValueError(f"{vid}: ผลต้องเป็น done/open/unsure ไม่ใช่ {verdict}")
+        cnt = con.execute("SELECT COUNT(*) FROM comments WHERE video_id = ?", (vid,)).fetchone()[0]
+        db.save_finish_check(con, vid, verdict, note, cnt)
+        if con.execute("SELECT 1 FROM scores WHERE video_id = ?", (vid,)).fetchone():
+            db.set_finished(con, vid, {"done": True, "open": False, "unsure": None}[verdict], note)
+        n[verdict] += 1
+    con.commit()
+    return n
 
 
 SYNC_URL = "https://yt-library-status.ytlib-765e3f.workers.dev/status"
@@ -586,6 +687,7 @@ def main() -> int:
     s = sub.add_parser("set-sets"); s.add_argument("file", type=Path)
     s = sub.add_parser("remove-set"); s.add_argument("set_id")
     s = sub.add_parser("set-finished"); s.add_argument("file", type=Path)
+    s = sub.add_parser("finish-verdicts"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-duplicate"); s.add_argument("video_id"); s.add_argument("of")
     s.add_argument("--clear", action="store_true")
     s = sub.add_parser("set-language"); s.add_argument("channel"); s.add_argument("language")
@@ -640,6 +742,10 @@ def main() -> int:
             db.set_finished(con, vid, it.get("finished"), it.get("note"))
         con.commit()
         print(f"ตั้งป้ายจบแล้ว/ยังไม่จบ {len(m)} เรื่อง")
+        return 0
+    if args.cmd == "finish-verdicts":
+        n = import_finish_verdicts(con, json.loads(args.file.read_text(encoding="utf-8")))
+        print(f"บันทึกผลตรวจเรื่องจบ {sum(n.values())} คลิป: " + " · ".join(f"{k} {v}" for k, v in n.items()))
         return 0
     if args.cmd in ("import-status", "pull-status"):
         m = fetch_remote_status() if args.cmd == "pull-status" else json.loads(args.file.read_text(encoding="utf-8"))

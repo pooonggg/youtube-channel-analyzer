@@ -92,6 +92,17 @@ CREATE TABLE IF NOT EXISTS set_parts (
     overlap_note TEXT                                           -- why counted = 0
 );
 CREATE INDEX IF NOT EXISTS idx_set_parts_set ON set_parts(set_id);
+-- "does the story really end in this clip?" — judged once per clip from a 1-unit comment sample
+-- (user asked 2026-11-12: a clip of 4 h+ whose story is truly finished joins the library even under
+-- 10 h or the view bar). done = enters the library · open/unsure = no · nosignal = nobody talks about
+-- an ending (decided by code, no reading needed)
+CREATE TABLE IF NOT EXISTS finish_checks (
+    video_id    TEXT PRIMARY KEY REFERENCES videos(video_id),
+    verdict     TEXT NOT NULL CHECK (verdict IN ('done', 'open', 'unsure', 'nosignal')),
+    note        TEXT,
+    n_comments  INTEGER,
+    checked_at  TEXT NOT NULL
+);
 """
 
 
@@ -271,6 +282,11 @@ MIN_DURATION_SECONDS = 10 * 3600
 MIN_VIEWS = 40_000  # was 50_000 until 2026-10-17 (user asked for a slight easing: +11 clips)
 RAMP_DAYS = 60
 SET_MAX_GAP_DAYS = 120  # parts of one set: each part uploaded at most ~4 months after the previous one
+# Finished stories (user 2026-11-12): 4 h+ and judged "done" from comments -> in the library whatever the
+# length or views. Only clips old enough to have comments are judged; unclear verdicts are re-judged later.
+MIN_FINISHED_SECONDS = 4 * 3600
+FINISH_MIN_AGE_DAYS = 14
+FINISH_RECHECK_DAYS = 90
 
 
 def _views_ok(alias: str) -> str:
@@ -291,7 +307,10 @@ ELIGIBLE_SETS_SQL = (f"SELECT p.set_id FROM set_parts p JOIN videos pv ON pv.vid
 # Clips that belong to a set are never units on their own.
 SINGLE_ELIGIBLE_SQL = (f"v.duplicate_of IS NULL AND v.gone_at IS NULL AND v.duration_seconds > {MIN_DURATION_SECONDS} "
                        f"AND {_views_ok('v')} AND v.video_id NOT IN (SELECT video_id FROM set_parts)")
-ELIGIBLE_SQL = f"(({SINGLE_ELIGIBLE_SQL}) OR v.video_id IN ({ELIGIBLE_SETS_SQL}))"
+FINISHED_SHORT_SQL = (f"v.duplicate_of IS NULL AND v.gone_at IS NULL AND v.duration_seconds >= {MIN_FINISHED_SECONDS} "
+                      f"AND v.video_id NOT IN (SELECT video_id FROM set_parts) "
+                      f"AND v.video_id IN (SELECT video_id FROM finish_checks WHERE verdict = 'done')")
+ELIGIBLE_SQL = f"(({SINGLE_ELIGIBLE_SQL}) OR ({FINISHED_SHORT_SQL}) OR v.video_id IN ({ELIGIBLE_SETS_SQL}))"
 # Every clip shown on the site / that needs comments: eligible units + all live parts of eligible sets
 IN_LIBRARY_SQL = (f"({ELIGIBLE_SQL} OR (v.duplicate_of IS NULL AND v.gone_at IS NULL AND v.video_id IN "
                   f"(SELECT video_id FROM set_parts WHERE set_id IN ({ELIGIBLE_SETS_SQL}))))")
@@ -383,3 +402,35 @@ def set_finished(con, video_id: str, finished: bool | None, note: str | None = N
                       (None if finished is None else int(finished), note, video_id))
     if cur.rowcount == 0:
         raise ValueError(f"{video_id} has no score yet")
+
+
+# ---------------------------------------------------------------- finish checks (เรื่องจบจริง)
+
+def finish_candidates(con) -> list[sqlite3.Row]:
+    """Thai-dubbed clips of 4 h+ that are not in the library, old enough to have comments, and never judged
+    (or judged nosignal/unsure more than FINISH_RECHECK_DAYS ago). Parts of a set are left to the set rules."""
+    langs = channel_languages(con)
+    rows = con.execute(f"""
+        SELECT v.video_id, v.channel_id, v.title, v.duration_seconds, v.view_count FROM videos v
+        LEFT JOIN finish_checks f USING (video_id)
+        WHERE v.duplicate_of IS NULL AND v.gone_at IS NULL AND v.duration_seconds >= {MIN_FINISHED_SECONDS}
+          AND v.video_id NOT IN (SELECT video_id FROM set_parts) AND NOT ({ELIGIBLE_SQL})
+          AND julianday('now') - julianday(v.published_at) >= {FINISH_MIN_AGE_DAYS}
+          AND (f.video_id IS NULL OR (f.verdict IN ('nosignal', 'unsure')
+               AND julianday('now') - julianday(f.checked_at) >= {FINISH_RECHECK_DAYS}))
+        ORDER BY v.view_count DESC""").fetchall()
+    return [r for r in rows if langs.get(r["channel_id"], "th") == "th"]
+
+
+def save_finish_check(con, video_id: str, verdict: str, note: str | None = None, n_comments: int | None = None) -> None:
+    con.execute("""INSERT INTO finish_checks (video_id, verdict, note, n_comments, checked_at) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(video_id) DO UPDATE SET verdict=excluded.verdict, note=excluded.note,
+                     n_comments=COALESCE(excluded.n_comments, n_comments), checked_at=excluded.checked_at""",
+                (video_id, verdict, note, n_comments, now_iso()))
+
+
+# Library clips whose comments still have to be fetched in full. A finish-check sample (100 threads,
+# comments_status = 'sample') is enough to score a finished story; any other clip that later enters the
+# library through the 10 h route gets its full comments.
+NEEDS_COMMENTS_SQL = (f"{IN_LIBRARY_SQL} AND (v.comments_fetched_at IS NULL OR (v.comments_status = 'sample' "
+                      f"AND v.video_id NOT IN (SELECT video_id FROM finish_checks WHERE verdict = 'done')))")

@@ -315,7 +315,7 @@ footer b { color: var(--muted); font-weight: 500; }
 
   <footer>
     <div>
-      <b>เกณฑ์คัดคลิป</b> ยาวกว่า 10 ชั่วโมง · ยอดวิว <span id="minViews"></span>+ (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุคลิป) · ไม่นับคลิปที่ลงซ้ำ<br>
+      <b>เกณฑ์คัดคลิป</b> ยาวกว่า 10 ชั่วโมง · ยอดวิว <span id="minViews"></span>+ (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุคลิป) · ไม่นับคลิปที่ลงซ้ำ · ยกเว้นเรื่องที่ผู้ชมยืนยันว่าจบจริง ยาว 4 ชม. ขึ้นไปก็เข้าคลังได้ (ป้าย "จบในคลิป")<br>
       <b>ชุดตอน</b> เรื่องที่ช่องเดียวกันแบ่งลงหลายคลิป นับเวลารวมกัน (คลิปที่เนื้อหาทับกับคลิปอื่นไม่นับซ้ำ) ใช้ยอดวิวของคลิปที่วิวสูงสุดในชุด<br>
       <b>คะแนน</b> Claude อ่านคอมเมนต์ผู้ชมแล้วสรุปว่าสนุกและดูได้ราบรื่นแค่ไหน · เรื่องเดียวกันหลายฉบับรวมเป็นการ์ดเดียว · ป้าย “จบแล้ว” มาจากคอมเมนต์ ไม่มีผลกับคะแนน<br>
       <b>สถานะ</b> ดูแล้ว / สนใจ / ไม่สนใจ บันทึกในเบราว์เซอร์นี้ และซิงก์ข้ามเครื่องเมื่อเปิดซิงก์
@@ -331,7 +331,7 @@ footer b { color: var(--muted); font-weight: 500; }
     <h2 id="fTitle">ตัวกรอง</h2>
     <p class="sub">ตัวกรองถูกจำไว้ในเบราว์เซอร์นี้</p>
     <h3>สถานะ</h3><div class="opts" id="statusOpts"></div>
-    <h3>เรื่องจบแล้ว <span style="color:var(--faint)">— ดูจากคอมเมนต์ผู้ชม ไม่มีผลกับคะแนน</span></h3><div class="opts" id="finOpts"></div>
+    <h3>เรื่องจบแล้ว / ความยาว <span style="color:var(--faint)">— จบแล้วดูจากคอมเมนต์ผู้ชม ไม่มีผลกับคะแนน</span></h3><div class="opts" id="finOpts"></div>
     <h3>ช่อง <span id="chHint" style="color:var(--faint)">— ไม่เลือก = ทุกช่อง</span></h3><div class="opts" id="channelOpts"></div>
     <div class="sheet-foot"><button type="button" class="link" id="fReset">ล้างทั้งหมด</button><button type="button" class="btn-ghost" id="fDone">เสร็จ</button></div>
   </div>
@@ -504,7 +504,7 @@ function loadFilters() {
     s2: "",   // เรียงชั้นที่สองถูกถอดออกจากหน้าเว็บแล้ว (2026-11-02) — เสมอกันใช้อันดับของ Claude
     statuses: new Set((Array.isArray(f.statuses) ? f.statuses : DEFAULT_FILTERS.statuses).filter(k => k in STATUS_FILTER)),
     channels: new Set((Array.isArray(f.channels) ? f.channels : []).filter(c => allCh.has(c))),  // ช่องที่ไม่มีแล้วตัดทิ้ง
-    fin: f.fin === "done" ? "done" : "all",
+    fin: ["done", "long"].includes(f.fin) ? f.fin : "all",
   };
 }
 function saveFilters() {
@@ -559,6 +559,8 @@ function timeAgo(ts) {
 const hours = d => (d / 3600).toFixed(d >= 36000 ? 0 : 1).replace(/\.0$/, "") + " ชม.";
 const scoreClass = s => s >= 75 ? "s-hi" : s >= 50 ? "s-mid" : "s-lo";
 const rankText = v => v.rank ? `#${v.rank}` : "";
+// a finished story under 10 h — in the library only because it ends (user 2026-11-12)
+const isShortFinished = u => !u.isSet && u.finished && u.dur < 10 * 3600;
 const setChip = u => `${u.parts.length} คลิป · รวม ${hours(u.dur)}`;
 
 // ---------- status ----------
@@ -611,7 +613,7 @@ function card(u, i, featured) {
       <span class="play"><span>${ICON.play}</span></span>
       ${featured && u.rank ? `<span class="chip-on-img c-state">อันดับ ${u.rank}</span>` : ""}
       ${!featured && st && st !== "not_interested" ? `<span class="chip-on-img c-state ${st}">${stLabel}</span>` : ""}
-      ${u.finished ? `<span class="chip-on-img c-fin">${ICON.watched}จบแล้ว</span>` : ""}
+      ${u.finished ? `<span class="chip-on-img c-fin">${ICON.watched}${isShortFinished(u) ? "จบในคลิป" : "จบแล้ว"}</span>` : ""}
       ${u.foreign ? `<span class="chip-on-img c-lang">${esc(u.langLabel)}</span>` : ""}
       ${u.isSet ? `<span class="chip-on-img c-dur c-set">${ICON.list}${setChip(u)}</span>` : `<span class="chip-on-img c-dur">${u.durText}</span>`}
     </a>
@@ -647,6 +649,7 @@ function render() {
     state.statuses.has(statusOf(u) ?? "none") &&
     (!chSel.size || chSel.has(u.ch)) &&
     (state.fin !== "done" || u.finished) &&
+    (state.fin !== "long" || !isShortFinished(u)) &&
     (!q || u.search.includes(q) || (u.tag || "").toLowerCase().includes(q))));
   // one card per story: the best-placed version in the current order; all versions are listed in the detail dialog
   const seen = new Set();
@@ -655,7 +658,7 @@ function render() {
     if (seen.has(u.series)) return false;
     seen.add(u.series); return true;
   });
-  const filtersOn = (isDefaultStatuses() ? 0 : 1) + (chSel.size ? 1 : 0) + (state.fin === "done" ? 1 : 0);
+  const filtersOn = (isDefaultStatuses() ? 0 : 1) + (chSel.size ? 1 : 0) + (state.fin !== "all" ? 1 : 0);
   document.getElementById("nFilters").textContent = filtersOn || "";
   document.getElementById("resetFilters").hidden = !filtersOn && state.s1 === DEFAULT_FILTERS.s1 && !q;
 
@@ -725,7 +728,7 @@ function openDetail(id) {
       ${u.isSet ? `<p class="d-kind">${ICON.list}ชุดตอน · ช่องเดียวกันลงเรื่องนี้เป็น ${u.parts.length} คลิป</p>` : ""}
       <h2 class="d-title">${esc(u.title)}</h2>
       <p class="d-meta"><a href="${esc(u.chUrl)}" target="_blank" rel="noopener">${esc(u.ch)}</a> · ${u.isSet ? `คลิปแรก ${timeAgo(u.firstTs)} · คลิปล่าสุด ${timeAgo(u.pubTs)}` : `ลงเมื่อ ${timeAgo(u.pubTs)}`}${u.foreign ? ` · ${esc(u.langLabel)}` : ""}</p>
-      ${u.finished ? `<p class="d-fin">${ICON.watched}<span><b>จบแล้ว</b>${u.finNote ? ` — ${u.finNote}` : ""}</span></p>` : ""}
+      ${u.finished ? `<p class="d-fin">${ICON.watched}<span><b>จบแล้ว</b>${u.finNote ? ` — ${u.finNote}` : ""}${isShortFinished(u) ? `<br>ยาวไม่ถึง 10 ชม. แต่อยู่ในคลังเพราะเรื่องจบในคลิปนี้` : ""}</span></p>` : ""}
       ${u.tag ? `<p class="d-tag">${u.tag}</p>` : ""}
       <dl class="stats">
         <div><dt>${u.isSet ? "ความยาวรวม (ไม่นับซ้ำ)" : "ความยาว"}</dt><dd>${u.durText}</dd></div>
@@ -776,7 +779,8 @@ function renderFilterOpts() {
     }));
   }
   const fo = document.getElementById("finOpts"); fo.replaceChildren();
-  for (const [k, label, n] of [["all", "ทุกเรื่อง", tabUnits.length], ["done", "จบแล้วเท่านั้น", tabUnits.filter(u => u.finished).length]]) {
+  for (const [k, label, n] of [["all", "ทุกเรื่อง", tabUnits.length], ["done", "จบแล้วเท่านั้น", tabUnits.filter(u => u.finished).length],
+                               ["long", "เฉพาะ 10 ชม.+", tabUnits.filter(u => !isShortFinished(u)).length]]) {
     fo.append(opt(label, n, state.fin === k, () => { state.fin = k; renderFilterOpts(); render(); }));
   }
   const co = document.getElementById("channelOpts"); co.replaceChildren();

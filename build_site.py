@@ -64,10 +64,12 @@ def load_data() -> tuple[list[dict], dict]:
     rows = con.execute(f"""
         SELECT v.video_id, v.channel_id, v.title, v.published_at, v.duration_seconds, v.view_count, v.like_count,
                v.comment_count, v.thumbnail_url, c.title AS channel, c.url AS channel_url,
-               s.score, s.tie_rank, s.summary, s.reasons, s.series, s.series_order, s.finished, s.finished_note,
+               s.score, s.tie_rank, s.summary, s.reasons, s.series, s.series_order,
+               COALESCE(s.finished, CASE WHEN f.verdict = 'done' THEN 1 END) AS finished,
+               COALESCE(s.finished_note, f.note) AS finished_note,
                p.set_id, p.part_order, p.label, p.counted, p.overlap_note
         FROM videos v JOIN channels c USING (channel_id) LEFT JOIN scores s USING (video_id)
-        LEFT JOIN set_parts p USING (video_id)
+        LEFT JOIN set_parts p USING (video_id) LEFT JOIN finish_checks f USING (video_id)
         WHERE {db.IN_LIBRARY_SQL}
         ORDER BY s.score IS NULL, s.score DESC, COALESCE(s.tie_rank, 9999), v.view_count DESC""").fetchall()
     set_rows = {r["set_id"]: r for r in con.execute("SELECT * FROM sets")}
