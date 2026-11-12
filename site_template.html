@@ -102,6 +102,15 @@ select.field option { background: var(--surface-2); }
 .c-lang { left: 8px; bottom: 8px; }
 .c-state { left: 8px; top: 8px; }
 .c-state.watched { color: var(--hi); } .c-state.interested { color: var(--mid); }
+.c-fin { right: 8px; top: 8px; display: inline-flex; align-items: center; gap: 4px; background: rgba(140,192,143,.94); color: #0e1a0f; font-weight: 600; }
+.c-fin svg { width: 13px; height: 13px; }
+/* ชุดตอน: การ์ดซ้อนเป็นตั้ง + ป้ายจำนวนคลิป/ชั่วโมงรวมสีเด่น ให้รู้ว่าเป็นลิสต์ */
+.card.is-set .poster { overflow: visible; box-shadow: 0 -5px 0 -2px rgba(224,112,58,.55), 0 -10px 0 -4px rgba(224,112,58,.28); }
+.card.is-set .poster img { border-radius: var(--r); }
+.card.is-set .poster::after { border-radius: var(--r); }
+.card.is-set:hover .poster img { transform: none; filter: brightness(1.06); }
+.c-set { display: inline-flex; align-items: center; gap: 5px; background: var(--accent); color: #1a0e07; font-family: var(--sans); font-weight: 600; font-size: 12px; }
+.c-set svg { width: 13px; height: 13px; }
 .card.is-watched .poster img { filter: saturate(.55) brightness(.8); }
 .c-body { padding: 12px 2px 0; display: flex; flex-direction: column; gap: 5px; flex: 1; }
 .c-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--faint); }
@@ -144,7 +153,7 @@ dialog::backdrop { background: rgba(8,7,6,.66); backdrop-filter: blur(3px); }
 dialog[open] .panel { animation: pop .28s var(--ease); }
 @keyframes pop { from { opacity: 0; transform: translateY(14px) scale(.985); } }
 .panel { position: relative; background: var(--surface); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
-#detail .panel { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
+#detail .panel { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; overscroll-behavior: contain; }
 .d-hero { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); }
 .d-hero img { width: 100%; height: 100%; object-fit: cover; border-radius: 18px 18px 0 0; }
 .d-hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, var(--surface) 2%, transparent 45%); }
@@ -179,6 +188,22 @@ dialog[open] .panel { animation: pop .28s var(--ease); }
 .ep .o { font: 600 13px var(--mono); color: var(--faint); }
 .ep .t { font-size: 14px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .ep .s { display: block; color: var(--faint); font-size: 12px; }
+.d-sec small { margin-left: 8px; color: var(--faint); font: 500 12.5px var(--sans); }
+.part { cursor: default; }
+.part a { display: block; min-width: 0; }
+.part a:hover .t { color: var(--accent); }
+.part.skip .t, .part.skip .o { opacity: .5; }
+.part.skip .s { color: var(--mid); }
+.part.done .t { color: var(--muted); }
+.tick { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line-2); background: transparent; color: var(--faint); transition: all .15s; }
+.tick:hover { color: var(--text); border-color: var(--muted); }
+.tick[aria-pressed="true"] { color: var(--hi); border-color: rgba(140,192,143,.6); background: rgba(140,192,143,.1); }
+.d-kind { display: inline-flex; align-items: center; gap: 6px; margin: 12px 0 0; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 500; }
+.d-kind svg { width: 14px; height: 14px; }
+.d-fin { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0 0; padding: 10px 14px; border-radius: var(--r); background: rgba(140,192,143,.1); color: #cfe3cf; font-size: 14px; line-height: 1.55; }
+.d-fin svg { flex: none; margin-top: 3px; color: var(--hi); }
+.d-fin b { color: var(--hi); font-weight: 600; }
+.d-note { margin: 14px 0 0; color: var(--mid); font-size: 13.5px; }
 .d-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
 .d-acts .act { height: 40px; padding: 0 14px; border-color: var(--line-2); color: var(--muted); font-size: 14px; }
 .d-acts .act .lbl { display: inline; }
@@ -291,7 +316,8 @@ footer b { color: var(--muted); font-weight: 500; }
   <footer>
     <div>
       <b>เกณฑ์คัดคลิป</b> ยาวกว่า 10 ชั่วโมง · ยอดวิว <span id="minViews"></span>+ (คลิปอายุไม่ถึง 2 เดือนใช้เกณฑ์ตามอายุคลิป) · ไม่นับคลิปที่ลงซ้ำ<br>
-      <b>คะแนน</b> Claude อ่านคอมเมนต์ผู้ชมแล้วสรุปว่าสนุกและดูได้ราบรื่นแค่ไหน · เรื่องเดียวกันหลายฉบับรวมเป็นการ์ดเดียว<br>
+      <b>ชุดตอน</b> เรื่องที่ช่องเดียวกันแบ่งลงหลายคลิป นับเวลารวมกัน (คลิปที่เนื้อหาทับกับคลิปอื่นไม่นับซ้ำ) ใช้ยอดวิวของคลิปที่วิวสูงสุดในชุด<br>
+      <b>คะแนน</b> Claude อ่านคอมเมนต์ผู้ชมแล้วสรุปว่าสนุกและดูได้ราบรื่นแค่ไหน · เรื่องเดียวกันหลายฉบับรวมเป็นการ์ดเดียว · ป้าย “จบแล้ว” มาจากคอมเมนต์ ไม่มีผลกับคะแนน<br>
       <b>สถานะ</b> ดูแล้ว / สนใจ / ไม่สนใจ บันทึกในเบราว์เซอร์นี้ และซิงก์ข้ามเครื่องเมื่อเปิดซิงก์
     </div>
     <div>ข้อมูลจาก YouTube Data API · <span id="gen"></span></div>
@@ -305,6 +331,7 @@ footer b { color: var(--muted); font-weight: 500; }
     <h2 id="fTitle">ตัวกรอง</h2>
     <p class="sub">ตัวกรองถูกจำไว้ในเบราว์เซอร์นี้</p>
     <h3>สถานะ</h3><div class="opts" id="statusOpts"></div>
+    <h3>เรื่องจบแล้ว <span style="color:var(--faint)">— ดูจากคอมเมนต์ผู้ชม ไม่มีผลกับคะแนน</span></h3><div class="opts" id="finOpts"></div>
     <h3>ช่อง <span id="chHint" style="color:var(--faint)">— ไม่เลือก = ทุกช่อง</span></h3><div class="opts" id="channelOpts"></div>
     <div class="sheet-foot"><button type="button" class="link" id="fReset">ล้างทั้งหมด</button><button type="button" class="btn-ghost" id="fDone">เสร็จ</button></div>
   </div>
@@ -332,6 +359,7 @@ const ICON = {
   not_interested: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="m6 6 12 12"/></svg>',
   play: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
   close: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  list: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>',
 };
 const SORTS = {
   rank: ["อันดับของ Claude", v => v.rank ?? 1e9, 1],
@@ -465,7 +493,7 @@ setTimeout(pull, 0);
 
 // ตัวกรอง/การเรียงที่ผู้ชมเลือกไว้ จำไว้ในเบราว์เซอร์นี้ (ไม่รวมช่องค้นหา) — รีเฟรชแล้วได้ค่าเดิม
 const FILTER_KEY = "yt-library-filters-v1";
-const DEFAULT_FILTERS = { s1: "rank", s2: "", statuses: ["none", "interested", "watched"], channels: [] };
+const DEFAULT_FILTERS = { s1: "rank", s2: "", statuses: ["none", "interested", "watched"], channels: [], fin: "all" };
 function loadFilters() {
   const f = { ...DEFAULT_FILTERS };
   try { Object.assign(f, JSON.parse(ls.get(FILTER_KEY)) || {}); } catch {}
@@ -476,10 +504,11 @@ function loadFilters() {
     s2: "",   // เรียงชั้นที่สองถูกถอดออกจากหน้าเว็บแล้ว (2026-11-02) — เสมอกันใช้อันดับของ Claude
     statuses: new Set((Array.isArray(f.statuses) ? f.statuses : DEFAULT_FILTERS.statuses).filter(k => k in STATUS_FILTER)),
     channels: new Set((Array.isArray(f.channels) ? f.channels : []).filter(c => allCh.has(c))),  // ช่องที่ไม่มีแล้วตัดทิ้ง
+    fin: f.fin === "done" ? "done" : "all",
   };
 }
 function saveFilters() {
-  ls.set(FILTER_KEY, JSON.stringify({ s1: state.s1, s2: state.s2, statuses: [...state.statuses], channels: [...state.channels] }));
+  ls.set(FILTER_KEY, JSON.stringify({ s1: state.s1, s2: state.s2, statuses: [...state.statuses], channels: [...state.channels], fin: state.fin }));
 }
 const state = loadFilters();
 // แท็บภาษา: เปิดหน้าเว็บมาเจอคลิปพากย์ไทยเสมอ (ไม่จำค่า) · คลิปเสียงภาษาอื่นต้องกดแท็บก่อนจึงจะแสดง
@@ -488,16 +517,28 @@ const inTab = v => v.foreign === (state.tab === "other");
 const isDefaultStatuses = () => state.statuses.size === DEFAULT_FILTERS.statuses.length && DEFAULT_FILTERS.statuses.every(k => state.statuses.has(k));
 
 const now = Date.now();
+const SETS = DATA.sets || {};
 for (const v of DATA.videos) {
   v.pubTs = Date.parse(v.pub);
   v.vpd = (v.views ?? 0) / Math.max(1, (now - v.pubTs) / 864e5);
   v.praise = ((v.summary || "").match(/<li>👍\s*(.*?)<\/li>/) || [])[1] || "";
 }
 const byId = Object.fromEntries(DATA.videos.map(v => [v.id, v]));
+// หนึ่ง "เรื่อง" บนหน้าเว็บ = คลิปเดี่ยว หรือ "ชุดตอน" (ช่องเดียวกันลงเรื่องเดียวเป็นหลายคลิป) ที่ใช้คลิปนำของชุดเป็นตัวแทน
+const UNITS = DATA.videos.filter(v => !v.set || v.set === v.id).map(v => {
+  if (!v.set) return { ...v, search: v.title.toLowerCase() };
+  const S = SETS[v.set], parts = S.parts.map(id => byId[id]).filter(Boolean);
+  const first = Math.min(...parts.map(p => p.pubTs)), last = Math.max(...parts.map(p => p.pubTs));
+  return { ...v, isSet: true, S, parts, title: S.title, dur: S.dur, durText: S.durText,
+    views: S.views, likes: S.likes, comments: S.comments, pubTs: last, firstTs: first,
+    vpd: S.views / Math.max(1, (now - first) / 864e5),
+    search: (S.title + " " + parts.map(p => p.title).join(" ")).toLowerCase() };
+});
+const unitById = Object.fromEntries(UNITS.map(u => [u.id, u]));
 const groups = {};
-for (const v of DATA.videos) if (v.series) (groups[v.series] ??= []).push(v);
+for (const u of UNITS) if (u.series) (groups[u.series] ??= []).push(u);
 for (const k in groups) groups[k].sort((a, b) => a.order - b.order);
-const episodesOf = v => v.series && groups[v.series].length > 1 ? groups[v.series] : null;
+const versionsOf = u => u.series && groups[u.series].length > 1 ? groups[u.series] : null;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const ytUrl = id => `https://www.youtube.com/watch?v=${id}`;
 
@@ -515,52 +556,77 @@ function timeAgo(ts) {
   }
   return "เมื่อสักครู่";
 }
-const hours = d => (d / 3600).toFixed(d >= 36000 ? 0 : 1) + " ชม.";
+const hours = d => (d / 3600).toFixed(d >= 36000 ? 0 : 1).replace(/\.0$/, "") + " ชม.";
 const scoreClass = s => s >= 75 ? "s-hi" : s >= 50 ? "s-mid" : "s-lo";
 const rankText = v => v.rank ? `#${v.rank}` : "";
+const setChip = u => `${u.parts.length} คลิป · รวม ${hours(u.dur)}`;
 
 // ---------- status ----------
-function setStatus(id, k) {
-  if (statusMap[id] === k) delete statusMap[id]; else statusMap[id] = k;
-  store.set(statusMap); touch(id);
-  render();
-  if (document.getElementById("detail").open && detailId === id) openDetail(id);
+// ชุดตอน: ติ๊ก "ดูแล้ว" ได้ทีละคลิป · สถานะของทั้งชุด = ดูครบทุกคลิปที่นับเวลา → ดูแล้ว, ดูไปบางคลิป → สนใจ (กำลังดู)
+// ปุ่มสถานะบนการ์ดของชุด = ตั้งสถานะเดียวกันให้ทุกคลิปในชุด
+const countedParts = u => u.parts.filter(p => p.counted);
+const watchedCount = u => countedParts(u).filter(p => statusMap[p.id] === "watched").length;
+function statusOf(u) {
+  if (!u.isSet) return statusMap[u.id];
+  const w = watchedCount(u);
+  if (w && w >= countedParts(u).length) return "watched";
+  if (w || u.parts.some(p => statusMap[p.id] === "interested")) return "interested";
+  return statusMap[u.id] === "not_interested" ? "not_interested" : undefined;
 }
-function actButtons(v, withLabels) {
-  const st = statusMap[v.id];
+function refreshAfterStatus() {
+  store.set(statusMap); render();
+  if (document.getElementById("detail").open && detailId) openDetail(detailId);
+}
+function setStatus(id, k) {
+  const u = unitById[id]; if (!u) return;
+  const off = statusOf(u) === k;
+  for (const i of u.isSet ? u.parts.map(p => p.id) : [id]) { if (off) delete statusMap[i]; else statusMap[i] = k; touch(i); }
+  refreshAfterStatus();
+}
+function togglePart(id) {
+  if (statusMap[id] === "watched") delete statusMap[id]; else statusMap[id] = "watched";
+  touch(id); refreshAfterStatus();
+}
+function actButtons(u) {
+  const st = statusOf(u);
   return Object.entries(STATUS).map(([k, l]) =>
     `<button type="button" class="act" data-act="${k}" data-k="${k}" aria-pressed="${st === k}" title="${l}" aria-label="${l}">${ICON[k]}<span class="lbl">${l}</span></button>`).join("");
 }
 
 // ---------- cards ----------
-function card(v, i, featured) {
-  const st = statusMap[v.id];
-  const eps = episodesOf(v);
+function card(u, i, featured) {
+  const st = statusOf(u);
+  const vers = versionsOf(u);
+  const nCh = vers ? new Set(vers.map(x => x.ch)).size : 0;
+  const w = u.isSet ? watchedCount(u) : 0, nC = u.isSet ? countedParts(u).length : 0;
+  const stLabel = u.isSet && w && w < nC ? `ดูแล้ว ${w}/${nC}` : STATUS[st];
   const el = document.createElement("article");
-  el.className = "card" + (featured ? " feat" : "") + (st === "watched" ? " is-watched" : "");
-  el.tabIndex = 0; el.dataset.id = v.id; el.style.setProperty("--i", Math.min(i, 24));
-  el.setAttribute("aria-label", v.title);
+  el.className = "card" + (featured ? " feat" : "") + (st === "watched" ? " is-watched" : "") + (u.isSet ? " is-set" : "");
+  el.tabIndex = 0; el.dataset.id = u.id; el.style.setProperty("--i", Math.min(i, 24));
+  el.setAttribute("aria-label", u.title);
+  const firstLink = u.isSet ? (countedParts(u).find(p => statusMap[p.id] !== "watched") || u.parts[0]).id : u.id;
   el.innerHTML = `
-    <a class="poster" href="${ytUrl(v.id)}" target="_blank" rel="noopener" aria-label="เปิดบน YouTube: ${esc(v.title)}">
-      <img src="${esc(v.thumb)}" alt="" loading="${i < 8 ? "eager" : "lazy"}" decoding="async">
+    <a class="poster" href="${ytUrl(firstLink)}" target="_blank" rel="noopener" aria-label="เปิดบน YouTube: ${esc(u.title)}">
+      <img src="${esc(u.thumb)}" alt="" loading="${i < 8 ? "eager" : "lazy"}" decoding="async">
       <span class="play"><span>${ICON.play}</span></span>
-      ${featured && v.rank ? `<span class="chip-on-img c-state">อันดับ ${v.rank}</span>` : ""}
-      ${!featured && st && st !== "not_interested" ? `<span class="chip-on-img c-state ${st}">${STATUS[st]}</span>` : ""}
-      ${v.foreign ? `<span class="chip-on-img c-lang">${esc(v.langLabel)}</span>` : ""}
-      <span class="chip-on-img c-dur">${v.durText}</span>
+      ${featured && u.rank ? `<span class="chip-on-img c-state">อันดับ ${u.rank}</span>` : ""}
+      ${!featured && st && st !== "not_interested" ? `<span class="chip-on-img c-state ${st}">${stLabel}</span>` : ""}
+      ${u.finished ? `<span class="chip-on-img c-fin">${ICON.watched}จบแล้ว</span>` : ""}
+      ${u.foreign ? `<span class="chip-on-img c-lang">${esc(u.langLabel)}</span>` : ""}
+      ${u.isSet ? `<span class="chip-on-img c-dur c-set">${ICON.list}${setChip(u)}</span>` : `<span class="chip-on-img c-dur">${u.durText}</span>`}
     </a>
     <div class="c-body">
       <div class="c-row">
-        ${v.score != null ? `<span class="score ${scoreClass(v.score)}">${Math.round(v.score)}</span>` : `<span class="score pending">รอคะแนน</span>`}
-        ${!featured && v.rank ? `<span class="rank">${rankText(v)}</span>` : ""}
-        ${eps ? `<span class="pill">${eps.length} ฉบับ</span>` : ""}
+        ${u.score != null ? `<span class="score ${scoreClass(u.score)}">${Math.round(u.score)}</span>` : `<span class="score pending">รอคะแนน</span>`}
+        ${!featured && u.rank ? `<span class="rank">${rankText(u)}</span>` : ""}
+        ${vers ? `<span class="pill">${nCh > 1 ? `พากย์ ${nCh} ช่อง` : `${vers.length} ฉบับ`}</span>` : ""}
       </div>
-      <h3 class="c-title">${esc(v.title)}</h3>
-      ${v.tag ? `<p class="c-tag">${v.tag}</p>` : ""}
-      ${featured && v.praise ? `<p class="praise">${v.praise}</p>` : ""}
-      <p class="c-meta"><span class="ch">${esc(v.ch)}</span> · ${shortNum(v.views)} วิว · ${timeAgo(v.pubTs)}</p>
+      <h3 class="c-title">${esc(u.title)}</h3>
+      ${u.tag ? `<p class="c-tag">${u.tag}</p>` : ""}
+      ${featured && u.praise ? `<p class="praise">${u.praise}</p>` : ""}
+      <p class="c-meta"><span class="ch">${esc(u.ch)}</span> · ${u.isSet ? "วิวรวม " : ""}${shortNum(u.views)} วิว · ${u.isSet ? "คลิปล่าสุด " : ""}${timeAgo(u.pubTs)}</p>
     </div>
-    <div class="acts">${actButtons(v)}</div>`;
+    <div class="acts">${actButtons(u)}</div>`;
   return el;
 }
 
@@ -568,46 +634,48 @@ function sorted(list) {
   const [, f, dir] = SORTS[state.s1];
   return [...list].sort((a, b) => ((f(a) - f(b)) * dir) || ((a.rank ?? 1e9) - (b.rank ?? 1e9)));
 }
+const clipCount = list => list.reduce((n, u) => n + (u.isSet ? u.parts.length : 1), 0);
 
 let firstRender = true;
 function render() {
   saveFilters();
   const q = state.q.trim().toLowerCase();
-  const tabVideos = DATA.videos.filter(inTab);
+  const tabUnits = UNITS.filter(inTab);
   // ช่องที่เลือกไว้ในอีกแท็บไม่มีผลกับแท็บนี้ (ไม่อย่างนั้นสลับแท็บแล้วจะว่างเปล่า)
-  const chSel = new Set(tabVideos.map(v => v.ch).filter(c => state.channels.has(c)));
-  const list = sorted(tabVideos.filter(v =>
-    state.statuses.has(statusMap[v.id] ?? "none") &&
-    (!chSel.size || chSel.has(v.ch)) &&
-    (!q || v.title.toLowerCase().includes(q) || (v.tag || "").toLowerCase().includes(q))));
-  // one card per story: the best-placed clip in the current order; all clips are listed in the detail dialog
+  const chSel = new Set(tabUnits.map(u => u.ch).filter(c => state.channels.has(c)));
+  const list = sorted(tabUnits.filter(u =>
+    state.statuses.has(statusOf(u) ?? "none") &&
+    (!chSel.size || chSel.has(u.ch)) &&
+    (state.fin !== "done" || u.finished) &&
+    (!q || u.search.includes(q) || (u.tag || "").toLowerCase().includes(q))));
+  // one card per story: the best-placed version in the current order; all versions are listed in the detail dialog
   const seen = new Set();
-  let cards = list.filter(v => {
-    if (!episodesOf(v)) return true;
-    if (seen.has(v.series)) return false;
-    seen.add(v.series); return true;
+  let cards = list.filter(u => {
+    if (!versionsOf(u)) return true;
+    if (seen.has(u.series)) return false;
+    seen.add(u.series); return true;
   });
-  const filtersOn = (isDefaultStatuses() ? 0 : 1) + (chSel.size ? 1 : 0);
+  const filtersOn = (isDefaultStatuses() ? 0 : 1) + (chSel.size ? 1 : 0) + (state.fin === "done" ? 1 : 0);
   document.getElementById("nFilters").textContent = filtersOn || "";
   document.getElementById("resetFilters").hidden = !filtersOn && state.s1 === DEFAULT_FILTERS.s1 && !q;
 
   // "ควรดูก่อน": 3 อันดับแรกที่ยังไม่ได้ดู — เฉพาะตอนเรียงตามอันดับ ไม่ค้นหา ไม่กรองช่อง และยังแสดงคลิปที่ยังไม่เลือกสถานะ
   const showFeat = state.s1 === "rank" && !q && !chSel.size && state.statuses.has("none");
-  const feat = showFeat ? cards.filter(v => v.score != null && !["watched", "not_interested"].includes(statusMap[v.id])).slice(0, 3) : [];
-  const featIds = new Set(feat.map(v => v.id));
+  const feat = showFeat ? cards.filter(u => u.score != null && !["watched", "not_interested"].includes(statusOf(u))).slice(0, 3) : [];
+  const featIds = new Set(feat.map(u => u.id));
   const fs = document.getElementById("featured"); fs.replaceChildren();
-  feat.forEach((v, i) => fs.append(card(v, i, true)));
+  feat.forEach((u, i) => fs.append(card(u, i, true)));
   fs.hidden = document.getElementById("featHead").hidden = !feat.length;
-  cards = cards.filter(v => !featIds.has(v.id));
+  cards = cards.filter(u => !featIds.has(u.id));
 
   document.getElementById("gridTitle").textContent = feat.length ? "เรื่องอื่นๆ" : q ? `ผลการค้นหา “${state.q.trim()}”` : "ทุกเรื่อง";
   document.getElementById("count").textContent =
-    `${cards.length + feat.length} เรื่อง (${list.length} คลิป) จาก ${tabVideos.length} คลิป${state.tab === "other" ? "ในแท็บภาษาอื่น" : ""}`;
+    `${cards.length + feat.length} เรื่อง (${clipCount(list)} คลิป) จากทั้งหมด ${tabUnits.length} รายการ${state.tab === "other" ? "ในแท็บภาษาอื่น" : ""}`;
   const grid = document.getElementById("grid");
   grid.classList.toggle("intro", firstRender); firstRender = false;
   grid.replaceChildren();
   if (!cards.length && !feat.length) { grid.innerHTML = '<div class="empty">ไม่พบเรื่องตามตัวกรองนี้</div>'; return; }
-  cards.forEach((v, i) => grid.append(card(v, i, false)));
+  cards.forEach((u, i) => grid.append(card(u, i, false)));
 }
 
 // clicks on cards: status buttons / poster link / anywhere else = details
@@ -626,48 +694,69 @@ for (const id of ["grid", "featured"]) {
 
 // ---------- detail dialog ----------
 let detailId = null;
+function partsList(u) {
+  const w = watchedCount(u), nC = countedParts(u).length;
+  const skipped = u.parts.length - nC;
+  return `<h3 class="d-sec">คลิปทั้งหมดของชุดนี้ <small>${u.parts.length} คลิป · ดูแล้ว ${w}/${nC}${skipped ? ` · ${skipped} คลิปทับกับคลิปอื่น ไม่นับเวลาซ้ำ` : ""}</small></h3>
+    <div class="eps">${u.parts.map(p => {
+      const done = statusMap[p.id] === "watched";
+      return `<div class="ep part${p.counted ? "" : " skip"}${done ? " done" : ""}">
+        <span class="o">${p.part}</span>
+        <a href="${ytUrl(p.id)}" target="_blank" rel="noopener" title="เปิดบน YouTube">
+          <span class="t">${p.plabel ? `<b>${esc(p.plabel)}</b> · ` : ""}${esc(p.title)}</span>
+          <span class="s">${p.durText} · ${shortNum(p.views)} วิว · ลง ${timeAgo(p.pubTs)}${p.counted ? "" : ` · ไม่นับเวลา${p.overlap ? ": " + esc(p.overlap) : ""}`}</span>
+        </a>
+        <button type="button" class="tick" data-part="${p.id}" aria-pressed="${done}" title="${done ? "ยกเลิกดูแล้ว" : "ดูคลิปนี้แล้ว"}" aria-label="ดูคลิปที่ ${p.part} แล้ว">${ICON.watched}</button>
+      </div>`; }).join("")}</div>`;
+}
 function openDetail(id) {
-  const v = byId[id]; if (!v) return;
+  const u = unitById[id]; if (!u) return;
   detailId = id;
-  const eps = episodesOf(v);
-  const likePct = v.views ? (100 * (v.likes ?? 0) / v.views).toFixed(2) : null;
+  const vers = versionsOf(u);
+  const likePct = u.views ? (100 * (u.likes ?? 0) / u.views).toFixed(2) : null;
+  const w = u.isSet ? watchedCount(u) : 0;
+  const next = u.isSet ? (countedParts(u).find(p => statusMap[p.id] !== "watched") || u.parts[0]) : u;
   const p = document.getElementById("detailPanel");
   p.innerHTML = `
-    <div class="d-hero"><img src="${esc(v.thumb)}" alt=""><button type="button" class="icon-btn d-close" data-close aria-label="ปิด">${ICON.close}</button></div>
+    <div class="d-hero"><img src="${esc(u.thumb)}" alt=""><button type="button" class="icon-btn d-close" data-close aria-label="ปิด">${ICON.close}</button></div>
     <div class="d-body">
-      ${v.score != null ? `<div class="d-score ${scoreClass(v.score)}"><span class="num">${Math.round(v.score)}</span><span class="of">/100</span>${v.rank ? `<span class="rank">อันดับ ${rankText(v)}${v.foreign ? " ในแท็บภาษาอื่น" : ""}</span>` : ""}</div>`
+      ${u.score != null ? `<div class="d-score ${scoreClass(u.score)}"><span class="num">${Math.round(u.score)}</span><span class="of">/100</span>${u.rank ? `<span class="rank">อันดับ ${rankText(u)}${u.foreign ? " ในแท็บภาษาอื่น" : ""}</span>` : ""}</div>`
         : `<div class="d-score"><span class="of">ยังไม่มีคะแนน</span></div>`}
-      <h2 class="d-title">${esc(v.title)}</h2>
-      <p class="d-meta"><a href="${esc(v.chUrl)}" target="_blank" rel="noopener">${esc(v.ch)}</a> · ลงเมื่อ ${timeAgo(v.pubTs)}${v.foreign ? ` · ${esc(v.langLabel)}` : ""}</p>
-      ${v.tag ? `<p class="d-tag">${v.tag}</p>` : ""}
+      ${u.isSet ? `<p class="d-kind">${ICON.list}ชุดตอน · ช่องเดียวกันลงเรื่องนี้เป็น ${u.parts.length} คลิป</p>` : ""}
+      <h2 class="d-title">${esc(u.title)}</h2>
+      <p class="d-meta"><a href="${esc(u.chUrl)}" target="_blank" rel="noopener">${esc(u.ch)}</a> · ${u.isSet ? `คลิปแรก ${timeAgo(u.firstTs)} · คลิปล่าสุด ${timeAgo(u.pubTs)}` : `ลงเมื่อ ${timeAgo(u.pubTs)}`}${u.foreign ? ` · ${esc(u.langLabel)}` : ""}</p>
+      ${u.finished ? `<p class="d-fin">${ICON.watched}<span><b>จบแล้ว</b>${u.finNote ? ` — ${u.finNote}` : ""}</span></p>` : ""}
+      ${u.tag ? `<p class="d-tag">${u.tag}</p>` : ""}
       <dl class="stats">
-        <div><dt>ความยาว</dt><dd>${v.durText}</dd></div>
-        <div><dt>ยอดวิว</dt><dd>${shortNum(v.views)}</dd></div>
-        <div><dt>ไลก์</dt><dd>${shortNum(v.likes)}${likePct ? `<small>${likePct}%</small>` : ""}</dd></div>
-        <div><dt>คอมเมนต์</dt><dd>${shortNum(v.comments)}</dd></div>
+        <div><dt>${u.isSet ? "ความยาวรวม (ไม่นับซ้ำ)" : "ความยาว"}</dt><dd>${u.durText}</dd></div>
+        <div><dt>${u.isSet ? "ยอดวิวรวม" : "ยอดวิว"}</dt><dd>${shortNum(u.views)}</dd></div>
+        <div><dt>ไลก์</dt><dd>${shortNum(u.likes)}${likePct ? `<small>${likePct}%</small>` : ""}</dd></div>
+        <div><dt>คอมเมนต์</dt><dd>${shortNum(u.comments)}</dd></div>
       </dl>
-      ${v.summary ? `<div class="why">${v.summary}</div>` : ""}
-      ${v.reasons ? `<p class="reasons">${v.reasons}</p>` : ""}
-      ${eps ? `<h3 class="d-sec">เรื่องนี้มี ${eps.length} ฉบับ (ภาคต่อ / ช่องอื่น)</h3><div class="eps">${eps.map(e => `
-        <button type="button" class="ep" data-ep="${e.id}" aria-current="${e.id === v.id}">
+      ${u.isSet && u.S.note ? `<p class="d-note">${esc(u.S.note)}</p>` : ""}
+      ${u.isSet ? partsList(u) : ""}
+      ${u.summary ? `<div class="why">${u.summary}</div>` : ""}
+      ${u.reasons ? `<p class="reasons">${u.reasons}</p>` : ""}
+      ${vers ? `<h3 class="d-sec">เรื่องนี้มี ${vers.length} ฉบับ <small>ภาคต่อ / ช่องอื่นพากย์</small></h3><div class="eps">${vers.map(e => `
+        <button type="button" class="ep" data-ep="${e.id}" aria-current="${e.id === u.id}">
           <span class="o">${e.order}</span>
-          <span><span class="t">${esc(e.title)}</span><span class="s">${e.foreign ? esc(e.langLabel) + " · " : ""}${esc(e.ch)} · ${e.durText} · ${shortNum(e.views)} วิว${e.rank ? ` · ${rankText(e)}` : ""}</span></span>
+          <span><span class="t">${esc(e.title)}</span><span class="s">${e.foreign ? esc(e.langLabel) + " · " : ""}${esc(e.ch)} · ${e.isSet ? setChip(e) : e.durText} · ${shortNum(e.views)} วิว${e.finished ? " · จบแล้ว" : ""}${e.rank ? ` · ${rankText(e)}` : ""}</span></span>
           ${e.score != null ? `<span class="score ${scoreClass(e.score)}">${Math.round(e.score)}</span>` : ""}
         </button>`).join("")}</div>` : ""}
       <div class="d-acts">
-        <a class="btn-primary" href="${ytUrl(v.id)}" target="_blank" rel="noopener">${ICON.play} ดูบน YouTube</a>
-        ${actButtons(v, true)}
+        <a class="btn-primary" href="${ytUrl(next.id)}" target="_blank" rel="noopener">${ICON.play} ${u.isSet ? (w ? `ดูต่อ คลิปที่ ${next.part}` : "เริ่มดูคลิปแรก") : "ดูบน YouTube"}</a>
+        ${actButtons(u)}
       </div>
     </div>`;
   const d = document.getElementById("detail");
   if (!d.open) d.showModal();
-  p.scrollTop = 0;
 }
 document.getElementById("detail").addEventListener("click", e => {
   const d = e.currentTarget;
   if (e.target === d || e.target.closest("[data-close]")) { d.close(); return; }
+  const tick = e.target.closest("[data-part]"); if (tick) { togglePart(tick.dataset.part); return; }
   const act = e.target.closest("[data-act]"); if (act) { setStatus(detailId, act.dataset.act); return; }
-  const ep = e.target.closest("[data-ep]"); if (ep && ep.dataset.ep !== detailId) openDetail(ep.dataset.ep);
+  const ep = e.target.closest("[data-ep]"); if (ep && ep.dataset.ep !== detailId) { openDetail(ep.dataset.ep); document.getElementById("detailPanel").scrollTop = 0; }
 });
 
 // ---------- filters / settings dialogs ----------
@@ -678,17 +767,21 @@ function opt(label, count, on, onClick) {
   b.onclick = onClick; return b;
 }
 function renderFilterOpts() {
-  const tabVideos = DATA.videos.filter(inTab);
+  const tabUnits = UNITS.filter(inTab);
   const so = document.getElementById("statusOpts"); so.replaceChildren();
   for (const [k, label] of Object.entries(STATUS_FILTER)) {
-    const n = tabVideos.filter(v => (statusMap[v.id] ?? "none") === k).length;
+    const n = tabUnits.filter(u => (statusOf(u) ?? "none") === k).length;
     so.append(opt(label, n, state.statuses.has(k), () => {
       state.statuses.has(k) ? state.statuses.delete(k) : state.statuses.add(k); renderFilterOpts(); render();
     }));
   }
+  const fo = document.getElementById("finOpts"); fo.replaceChildren();
+  for (const [k, label, n] of [["all", "ทุกเรื่อง", tabUnits.length], ["done", "จบแล้วเท่านั้น", tabUnits.filter(u => u.finished).length]]) {
+    fo.append(opt(label, n, state.fin === k, () => { state.fin = k; renderFilterOpts(); render(); }));
+  }
   const co = document.getElementById("channelOpts"); co.replaceChildren();
   const counts = {};
-  for (const v of tabVideos) counts[v.ch] = (counts[v.ch] || 0) + 1;
+  for (const u of tabUnits) counts[u.ch] = (counts[u.ch] || 0) + 1;
   for (const c of Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))) {
     co.append(opt(c, counts[c], state.channels.has(c), () => {
       state.channels.has(c) ? state.channels.delete(c) : state.channels.add(c); renderFilterOpts(); render();
@@ -696,7 +789,7 @@ function renderFilterOpts() {
   }
 }
 function resetAll() {
-  state.s1 = DEFAULT_FILTERS.s1; state.statuses = new Set(DEFAULT_FILTERS.statuses); state.channels = new Set(); state.q = "";
+  state.s1 = DEFAULT_FILTERS.s1; state.statuses = new Set(DEFAULT_FILTERS.statuses); state.channels = new Set(); state.q = ""; state.fin = "all";
   document.getElementById("s1").value = state.s1; document.getElementById("q").value = "";
 }
 const dlg = id => document.getElementById(id);
@@ -710,10 +803,10 @@ dlg("resetFilters").onclick = () => { resetAll(); render(); };
 
 function renderTabs() {
   const tabs = dlg("langTabs");
-  const nOther = DATA.videos.filter(v => v.foreign).length;
+  const nOther = UNITS.filter(u => u.foreign).length;
   tabs.hidden = !nOther; if (!nOther) return;
   tabs.replaceChildren();
-  for (const [k, label, n] of [["th", "พากย์ไทย", DATA.videos.length - nOther], ["other", "ภาษาอื่น", nOther]]) {
+  for (const [k, label, n] of [["th", "พากย์ไทย", UNITS.length - nOther], ["other", "ภาษาอื่น", nOther]]) {
     const b = document.createElement("button");
     b.type = "button"; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", state.tab === k);
     b.innerHTML = `${label}<span>${n}</span>`;
@@ -727,9 +820,10 @@ function renderTabs() {
 }
 
 (function init() {
-  const thai = DATA.videos.filter(v => !v.foreign);
+  const thai = UNITS.filter(u => !u.foreign);
   const gen = new Date(DATA.generatedAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
-  dlg("meta").innerHTML = `<span class="desc">คลิปยาว 10 ชั่วโมงขึ้นไป คัดและให้คะแนนจากคอมเมนต์ผู้ชม · </span><b>${thai.length}</b> คลิป จาก <b>${new Set(thai.map(v => v.ch)).size}</b> ช่อง · อัปเดต ${gen}`;
+  const nSets = thai.filter(u => u.isSet).length;
+  dlg("meta").innerHTML = `<span class="desc">เรื่องยาว 10 ชั่วโมงขึ้นไป คัดและให้คะแนนจากคอมเมนต์ผู้ชม · </span><b>${thai.length}</b> เรื่อง${nSets ? ` (ชุดตอน <b>${nSets}</b>)` : ""} จาก <b>${new Set(thai.map(u => u.ch)).size}</b> ช่อง · อัปเดต ${gen}`;
   dlg("gen").textContent = "อัปเดต " + gen;
   dlg("minViews").textContent = shortNum(DATA.minViews ?? 40000);
   const s1 = dlg("s1");

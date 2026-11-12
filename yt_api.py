@@ -133,9 +133,11 @@ def fetch_subscriptions(yt, channel_id: str) -> list[dict]:
             return out
 
 
-def fetch_new_video_ids(yt, playlist_id: str, known: set[str], max_videos: int) -> list[str]:
+def fetch_new_video_ids(yt, playlist_id: str, known: set[str], max_videos: int, full: bool = False) -> list[str]:
     """Walk the uploads playlist (newest first) and stop at the first page that
-    contains an already-known video, so re-running a channel costs ~1 unit."""
+    contains an already-known video, so re-running a channel costs ~1 unit.
+    full=True walks the whole list (1 unit per 50 clips) and returns every clip not in `known` —
+    catches clips that appear late in the middle of the list (e.g. made public after a while)."""
     ids, token = [], None
     while len(ids) < max_videos:
         resp = _run(yt.playlistItems().list(
@@ -144,7 +146,7 @@ def fetch_new_video_ids(yt, playlist_id: str, known: set[str], max_videos: int) 
         page = [it["contentDetails"]["videoId"] for it in resp.get("items", [])]
         ids += [v for v in page if v not in known]
         token = resp.get("nextPageToken")
-        if not token or any(v in known for v in page):
+        if not token or (not full and any(v in known for v in page)):
             break
     return ids[:max_videos]
 
@@ -165,6 +167,7 @@ def fetch_videos(yt, ids: list[str]) -> list[dict]:
                 "like_count": _int(stats, "likeCount"),
                 "comment_count": _int(stats, "commentCount"),
                 "thumbnail_url": best_thumb(sn.get("thumbnails", {}), ["maxres", "standard", "high", "medium", "default"]),
+                "description": (sn.get("description") or "")[:4000],
             })
     return rows
 

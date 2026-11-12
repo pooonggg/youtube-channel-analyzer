@@ -16,6 +16,12 @@
   python ingest.py import-scores <file.json>
   python ingest.py set-ties <file.json>    {"video_id": tie_rank, ...} (1 = บนสุดในกลุ่มคะแนนเท่ากัน)
   python ingest.py set-series <file.json>   [{"series": "ชื่อเรื่อง", "videos": [id ตามลำดับ]}]
+                                       = เรื่องเดียวกันต่างช่อง/ต่างฉบับ (แต่ละฉบับคือคลิปเดี่ยวหรือชุดตอน)
+  python ingest.py set-sets <file.json>   [{"title", "note"?, "parts": [{"id", "label"?, "counted"?, "overlap"?}]}]
+                                       ชุดตอน = เรื่องเดียวที่ช่องเดียวลงเป็นหลายคลิป (รวมเวลาไม่นับซ้ำ ให้ผ่าน 10 ชม.)
+  python ingest.py remove-set <set_id>
+  python ingest.py set-finished <file.json>   {"video_id": {"finished": true|false|null, "note": "..."}}
+                                       ป้าย "จบแล้ว" จากคอมเมนต์ (ไม่เกี่ยวกับคะแนน)
   python ingest.py set-duplicate <id> <of> [--clear]
                                        mark a re-upload Claude confirmed (kept across mark_duplicates)
   python ingest.py set-language <channel id|title> <th|zh|en|other|auto>
@@ -24,7 +30,8 @@
   python ingest.py quota              units used today (Pacific day)
 
 The whole update (subscriptions -> new clips -> comments -> site) is `python update.py`.
-Eligible = not a duplicate, longer than 10 h, views above an age-based bar (see db.ELIGIBLE_SQL).
+Eligible = not a duplicate, longer than 10 h, views above an age-based bar (see db.ELIGIBLE_SQL);
+a set (ชุดตอน) counts its parts' hours without overlaps and is represented by its lead clip.
 Quota rules: re-running a channel stops at the first already-known page; comments are fetched
 once per eligible video (unless --recheck-comments finds the count grew 10%+).
 """
@@ -145,7 +152,7 @@ def _ensure_channel(con, yt, channel_id: str) -> None:
 
 
 def _missing_comment_ids(con, channel_id: str | None = None) -> list[str]:
-    sql = f"SELECT v.video_id FROM videos v WHERE {db.ELIGIBLE_SQL} AND v.comments_fetched_at IS NULL"
+    sql = f"SELECT v.video_id FROM videos v WHERE {db.IN_LIBRARY_SQL} AND v.comments_fetched_at IS NULL"
     args: tuple = ()
     if channel_id:
         sql += " AND v.channel_id = ?"
@@ -219,8 +226,15 @@ def refresh_stats(con, yt, statuses: list[str], log=print, all_videos: bool = Fa
     before = _eligible_ids(con)
     rows = yt_api.fetch_videos(yt, ids)
     db.upsert_videos(con, rows)
+    got = {r["video_id"] for r in rows}
+    gone = [i for i in ids if i not in got]
+    # videos.list returns nothing for deleted/private clips -> hide them (a later refresh that gets the
+    # clip back clears gone_at again in upsert_videos)
+    con.executemany("UPDATE videos SET gone_at = COALESCE(gone_at, ?) WHERE video_id = ?",
+                    [(db.now_iso(), i) for i in gone])
     con.commit()
-    log(f"อัปเดตยอดวิว/ไลก์ {len(rows)} คลิป")
+    log(f"อัปเดตยอดวิว/ไลก์ {len(rows)} คลิป"
+        + (f" · ไม่พบบน YouTube แล้ว (ถูกลบ/ปิด) {len(gone)} คลิป — ซ่อนจากเว็บ" if gone else ""))
     if all_videos:
         after = _eligible_ids(con)
         scored = {r["video_id"] for r in con.execute("SELECT video_id FROM scores")}
@@ -365,6 +379,25 @@ SIGNALS = {
 }
 
 
+FINISH = {
+    "done": re.compile(r"(?<!ยังไม่)(?<!ไม่)จบ ?(แล้ว|สมบูรณ์|บริบูรณ์|ดี|สวย|ครบ|แฮปปี้)|ดูจบแล้ว|ตอนจบ|จบเรื่อง|happy ?end", re.I),
+    "open": re.compile(r"ยังไม่จบ|ไม่จบ|ค้างไว้|ค้างคา|จบห้วน|ตัดจบ|รอ ?(ภาค|ตอน|ss|ซีซั่?น)|มีต่อ(ไหม|มั้ย|ป่าว)|"
+                       r"ต่อ(ไหม|มั้ย)|ภาค ?ต่อ|ภาค ?\d", re.I),
+}
+
+
+def finish_signals(rows, examples: int = 3) -> str:
+    """Whether viewers say the story ends in this clip/set (for the "จบแล้ว" tag, not the score):
+    counts + the most-liked short examples of each side."""
+    out = []
+    for k, rx in FINISH.items():
+        hits = sorted(((r["like_count"] or 0, _norm(r["text"])) for r in rows if rx.search(_norm(r["text"]))),
+                      key=lambda x: -x[0])
+        ex = " | ".join(f"[{lk}] {t[:70]}" for lk, t in hits[:examples])
+        out.append(f"{k}={len(hits)}" + (f" ({ex})" if ex else ""))
+    return "finish: " + " · ".join(out)
+
+
 def comment_signals(rows) -> str:
     counts = {k: [0, 0] for k in SIGNALS}
     for r in rows:
@@ -386,8 +419,25 @@ def _video_header(v, rows) -> str:
 
 
 def _comment_rows(con, video_id: str):
-    return con.execute("SELECT comment_id, parent_id, text, like_count FROM comments WHERE video_id = ? "
+    """Comments of a clip — for a set's lead clip, the comments of every part of the set."""
+    return con.execute("SELECT comment_id, parent_id, text, like_count FROM comments WHERE video_id IN "
+                       "(SELECT video_id FROM set_parts WHERE set_id = ?1 UNION SELECT ?1) "
                        "ORDER BY published_at", (video_id,)).fetchall()
+
+
+def _set_header(con, video_id: str) -> list[str]:
+    st = con.execute("SELECT * FROM sets WHERE set_id = ?", (video_id,)).fetchone()
+    if not st:
+        return []
+    parts = db.set_parts(con, video_id)
+    hours = sum(p["duration_seconds"] or 0 for p in parts if p["counted"]) / 3600
+    lines = [f"ชุดตอน «{st['title']}» {len(parts)} คลิป รวม {hours:.1f}h (ไม่นับซ้ำ) — ให้คะแนนทั้งชุด"
+             + (f" · หมายเหตุ: {st['note']}" if st["note"] else "")]
+    for p in parts:
+        skip = "" if p["counted"] else f"(ไม่นับเวลา: {p['overlap_note'] or 'ทับตอนอื่น'}) "
+        lines.append(f"  {p['part_order']}. `{p['video_id']}` {p['label'] or ''} {(p['duration_seconds'] or 0) / 3600:.1f}h "
+                     f"views={_short(p['view_count'])} {skip}| {p['title'][:70]}")
+    return lines
 
 
 SCORE_BANDS = [(85, 101), (70, 85), (55, 70), (40, 55), (0, 40)]
@@ -445,7 +495,8 @@ def export_scoring(con, channel: str | None = None, limit: int | None = None,
         lines += [
             f"## {v['video_id']} | {v['title']}",
             f"{_video_header(v, rows)} noise={noise} status={v['comments_status']}",
-            comment_signals(rows), *body, "",
+            *_set_header(con, v["video_id"]),
+            comment_signals(rows), finish_signals(rows), *body, "",
         ]
     out.write_text("\n".join(lines), encoding="utf-8")
     return out
@@ -463,18 +514,25 @@ def print_ranked(con, score: float | None = None, channel: str | None = None) ->
             FROM videos v JOIN scores s USING (video_id) JOIN channels c USING (channel_id)
             WHERE {' AND '.join(where)} ORDER BY s.score DESC, s.tie_rank, v.view_count DESC""", args):
         series = f" series={r['series']}#{r['series_order']}" if r["series"] else ""
+        st = con.execute("SELECT COUNT(*) n, SUM(v.duration_seconds * p.counted) d FROM set_parts p "
+                         "JOIN videos v USING (video_id) WHERE p.set_id = ?", (r["video_id"],)).fetchone()
+        if st["n"]:
+            series += f" [ชุด {st['n']} คลิป {st['d'] / 3600:.1f}h]"
         print(f"{r['score']:.0f}/{r['tie_rank'] or '-'} {r['video_id']} {r['ch']} | views={_short(r['view_count'])} "
               f"likes={_short(r['like_count'])} {r['duration_seconds'] / 3600:.1f}h {r['published_at'][:10]}"
               f"{series} | {r['title'][:70]}")
 
 
 def import_scores(con, path: Path) -> int:
-    """JSON list: {video_id, score 0-100, summary, reasons, tie_rank?, series?, series_order?}"""
+    """JSON list: {video_id, score 0-100, summary, reasons, tie_rank?, series?, series_order?,
+    finished? (true/false/null = ป้ายจบแล้ว ไม่เกี่ยวกับคะแนน), finished_note?}"""
     items = json.loads(path.read_text(encoding="utf-8"))
     for it in items:
-        seen = con.execute("SELECT COUNT(*) FROM comments WHERE video_id = ?", (it["video_id"],)).fetchone()[0]
+        seen = len(_comment_rows(con, it["video_id"]))
         db.upsert_score(con, it["video_id"], float(it["score"]), it.get("summary", ""), it.get("reasons", ""),
                         seen, it.get("tie_rank"), it.get("series"), it.get("series_order"))
+        if "finished" in it:
+            db.set_finished(con, it["video_id"], it["finished"], it.get("finished_note"))
     con.commit()
     return len(items)
 
@@ -525,6 +583,9 @@ def main() -> int:
     s = sub.add_parser("import-scores"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-series"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-ties"); s.add_argument("file", type=Path)
+    s = sub.add_parser("set-sets"); s.add_argument("file", type=Path)
+    s = sub.add_parser("remove-set"); s.add_argument("set_id")
+    s = sub.add_parser("set-finished"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-duplicate"); s.add_argument("video_id"); s.add_argument("of")
     s.add_argument("--clear", action="store_true")
     s = sub.add_parser("set-language"); s.add_argument("channel"); s.add_argument("language")
@@ -553,6 +614,32 @@ def main() -> int:
             db.set_series(con, g["series"], g["videos"])
         con.commit()
         print(f"จัดกลุ่ม {len(groups)} เรื่อง")
+        return 0
+    if args.cmd == "set-sets":
+        groups = json.loads(args.file.read_text(encoding="utf-8"))
+        try:
+            for g in groups:
+                sid = db.save_set(con, g["title"], g["parts"], g.get("note"), g.get("set_id"))
+                hours = sum(p["duration_seconds"] or 0 for p in db.set_parts(con, sid) if p["counted"]) / 3600
+                print(f"  {sid} {g['title']}: {len(g['parts'])} คลิป รวม {hours:.1f} ชม.")
+        except ValueError as e:
+            con.rollback()
+            print(e, file=sys.stderr)
+            return 1
+        con.commit()
+        print(f"บันทึกชุดตอน {len(groups)} ชุด")
+        return 0
+    if args.cmd == "remove-set":
+        db.remove_set(con, args.set_id)
+        con.commit()
+        print(f"ลบชุด {args.set_id} แล้ว (คลิปกลับไปเป็นคลิปเดี่ยว)")
+        return 0
+    if args.cmd == "set-finished":
+        m = json.loads(args.file.read_text(encoding="utf-8"))
+        for vid, it in m.items():
+            db.set_finished(con, vid, it.get("finished"), it.get("note"))
+        con.commit()
+        print(f"ตั้งป้ายจบแล้ว/ยังไม่จบ {len(m)} เรื่อง")
         return 0
     if args.cmd in ("import-status", "pull-status"):
         m = fetch_remote_status() if args.cmd == "pull-status" else json.loads(args.file.read_text(encoding="utf-8"))

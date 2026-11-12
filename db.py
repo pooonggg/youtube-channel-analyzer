@@ -7,6 +7,8 @@ Tables
   scores       Claude's score per video (written via `ingest.py import-scores`)
   user_status  the viewer's choice: watched / interested / not_interested
   quota_log    API units spent per Pacific-time day
+  sets         one story uploaded in several parts by ONE channel (ชุดตอน) — scored as one unit
+  set_parts    the clips of a set, in story order; counted = 0 when another part already covers it
 """
 from __future__ import annotations
 
@@ -74,6 +76,22 @@ CREATE TABLE IF NOT EXISTS quota_log (
     day_pt TEXT PRIMARY KEY,
     units  INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sets (
+    set_id     TEXT PRIMARY KEY REFERENCES videos(video_id),  -- = the lead part (normally part 1); its
+    channel_id TEXT NOT NULL REFERENCES channels(channel_id),  -- scores row is the score of the whole set
+    title      TEXT NOT NULL,
+    note       TEXT,                                           -- e.g. "ช่องไม่ได้ลงตอนที่ 4"
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS set_parts (
+    video_id     TEXT PRIMARY KEY REFERENCES videos(video_id),  -- a clip is in at most one set
+    set_id       TEXT NOT NULL REFERENCES sets(set_id) ON DELETE CASCADE,
+    part_order   INTEGER NOT NULL,
+    label        TEXT,                                          -- "SS 1-2", "ตอนที่ 7"
+    counted      INTEGER NOT NULL DEFAULT 1,
+    overlap_note TEXT                                           -- why counted = 0
+);
+CREATE INDEX IF NOT EXISTS idx_set_parts_set ON set_parts(set_id);
 """
 
 
@@ -98,13 +116,21 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 MIGRATIONS = {
     # manual_duplicate_of: a re-upload Claude confirmed by reading it (survives mark_duplicates)
     # first_seen_at: when this library first saw the clip (set once, used by the run report)
-    "videos": {"duplicate_of": "TEXT", "manual_duplicate_of": "TEXT", "first_seen_at": "TEXT"},
+    "videos": {"duplicate_of": "TEXT", "manual_duplicate_of": "TEXT", "first_seen_at": "TEXT",
+               # description: from the same videos.list call (no extra units) — helps link parts of a set
+               # gone_at: a full refresh no longer got the clip back (deleted / made private) -> hidden
+               "description": "TEXT", "gone_at": "TEXT"},
     # origin: NULL/'manual' = added by hand with `ingest.py channel`, 'subscription' = from the
     # viewing account's subscriptions · subscribed: 1 while that account still follows it
     # language: audio language of the channel's clips — NULL = guess from titles (see channel_languages),
     # 'th' = Thai dub (main page), anything else ('zh', 'en', ...) = the separate "other languages" tab
-    "channels": {"source_url": "TEXT", "origin": "TEXT", "subscribed": "INTEGER", "language": "TEXT"},
-    "scores": {"tie_rank": "INTEGER", "series": "TEXT", "series_order": "INTEGER"},
+    "channels": {"source_url": "TEXT", "origin": "TEXT", "subscribed": "INTEGER", "language": "TEXT",
+                 # full_scan_at: last walk of the WHOLE uploads playlist (the normal run stops at the first
+                 # known page, so clips that show up late in the middle of the list would be missed)
+                 "full_scan_at": "TEXT"},
+    # finished: 1 = comments make it clear the story is complete ("จบแล้ว" tag) — never part of the score
+    "scores": {"tie_rank": "INTEGER", "series": "TEXT", "series_order": "INTEGER",
+               "finished": "INTEGER", "finished_note": "TEXT"},
 }
 
 
@@ -131,14 +157,15 @@ def upsert_videos(con, rows: list[dict]) -> None:
     ts = now_iso()
     con.executemany(
         """INSERT INTO videos (video_id, channel_id, title, published_at, duration_seconds,
-             view_count, like_count, comment_count, thumbnail_url, stats_updated_at, first_seen_at)
+             view_count, like_count, comment_count, thumbnail_url, stats_updated_at, first_seen_at, description)
            VALUES (:video_id, :channel_id, :title, :published_at, :duration_seconds,
-             :view_count, :like_count, :comment_count, :thumbnail_url, :ts, :ts)
+             :view_count, :like_count, :comment_count, :thumbnail_url, :ts, :ts, :description)
            ON CONFLICT(video_id) DO UPDATE SET title=excluded.title,
              duration_seconds=excluded.duration_seconds, view_count=excluded.view_count,
              like_count=excluded.like_count, comment_count=excluded.comment_count,
-             thumbnail_url=excluded.thumbnail_url, stats_updated_at=excluded.stats_updated_at""",
-        [{**r, "ts": ts} for r in rows],
+             thumbnail_url=excluded.thumbnail_url, stats_updated_at=excluded.stats_updated_at,
+             description=COALESCE(excluded.description, description), gone_at=NULL""",
+        [{"description": None, **r, "ts": ts} for r in rows],
     )
 
 
@@ -243,11 +270,31 @@ WHERE v.duplicate_of IS NULL
 MIN_DURATION_SECONDS = 10 * 3600
 MIN_VIEWS = 40_000  # was 50_000 until 2026-10-17 (user asked for a slight easing: +11 clips)
 RAMP_DAYS = 60
-_AGE_DAYS = "MAX(0.5, julianday('now') - julianday(v.published_at))"
-# views > MIN_VIEWS*sqrt(r)  <=>  views^2 > MIN_VIEWS^2 * r   (SQLite has no sqrt by default)
-ELIGIBLE_SQL = (f"v.duplicate_of IS NULL AND v.duration_seconds > {MIN_DURATION_SECONDS} "
-                f"AND 1.0 * COALESCE(v.view_count, 0) * COALESCE(v.view_count, 0) > "
-                f"{MIN_VIEWS}.0 * {MIN_VIEWS} * MIN(1.0, {_AGE_DAYS} / {RAMP_DAYS})")
+SET_MAX_GAP_DAYS = 120  # parts of one set: each part uploaded at most ~4 months after the previous one
+
+
+def _views_ok(alias: str) -> str:
+    """views > MIN_VIEWS*sqrt(r)  <=>  views^2 > MIN_VIEWS^2 * r   (SQLite has no sqrt by default)"""
+    age = f"MAX(0.5, julianday('now') - julianday({alias}.published_at))"
+    return (f"1.0 * COALESCE({alias}.view_count, 0) * COALESCE({alias}.view_count, 0) > "
+            f"{MIN_VIEWS}.0 * {MIN_VIEWS} * MIN(1.0, {age} / {RAMP_DAYS})")
+
+
+# A set (one channel's story in several parts, agreed with the user 2026-11-12) is eligible when the
+# parts that count (overlaps excluded) add up to more than 10 h and its most-watched part passes the
+# view bar for that part's age — later parts always have fewer views than part 1.
+ELIGIBLE_SETS_SQL = (f"SELECT p.set_id FROM set_parts p JOIN videos pv ON pv.video_id = p.video_id "
+                     f"WHERE pv.duplicate_of IS NULL AND pv.gone_at IS NULL GROUP BY p.set_id "
+                     f"HAVING SUM(CASE WHEN p.counted = 1 THEN pv.duration_seconds ELSE 0 END) > {MIN_DURATION_SECONDS} "
+                     f"AND MAX(CASE WHEN {_views_ok('pv')} THEN 1 ELSE 0 END) = 1")
+# One "unit" of the library = a single clip, or a set represented by its lead clip (set_id).
+# Clips that belong to a set are never units on their own.
+SINGLE_ELIGIBLE_SQL = (f"v.duplicate_of IS NULL AND v.gone_at IS NULL AND v.duration_seconds > {MIN_DURATION_SECONDS} "
+                       f"AND {_views_ok('v')} AND v.video_id NOT IN (SELECT video_id FROM set_parts)")
+ELIGIBLE_SQL = f"(({SINGLE_ELIGIBLE_SQL}) OR v.video_id IN ({ELIGIBLE_SETS_SQL}))"
+# Every clip shown on the site / that needs comments: eligible units + all live parts of eligible sets
+IN_LIBRARY_SQL = (f"({ELIGIBLE_SQL} OR (v.duplicate_of IS NULL AND v.gone_at IS NULL AND v.video_id IN "
+                  f"(SELECT video_id FROM set_parts WHERE set_id IN ({ELIGIBLE_SETS_SQL}))))")
 
 
 def required_views(age_days: float) -> float:
@@ -275,3 +322,64 @@ def channel_languages(con) -> dict[str, str]:
         titles.setdefault(r[0], []).append(r[1])
     return {r[0]: r[1] or detect_language(titles.get(r[0], []))
             for r in con.execute("SELECT channel_id, language FROM channels")}
+
+
+# ---------------------------------------------------------------- sets (ชุดตอน)
+
+def save_set(con, title: str, parts: list[dict], note: str | None = None, set_id: str | None = None) -> str:
+    """parts: [{"id", "label"?, "counted"? (default True), "overlap"?}] in story order.
+    Replaces whatever sets these clips were in. All parts must come from one channel and each part
+    must be uploaded within SET_MAX_GAP_DAYS of the previous one (by upload date)."""
+    ids = [p["id"] for p in parts]
+    if len(ids) < 2 or len(set(ids)) != len(ids):
+        raise ValueError(f"ชุด {title}: ต้องมีอย่างน้อย 2 คลิปและห้ามซ้ำ")
+    rows = {r["video_id"]: r for r in con.execute(
+        f"SELECT video_id, channel_id, published_at FROM videos WHERE video_id IN ({','.join('?' * len(ids))})", ids)}
+    missing = [i for i in ids if i not in rows]
+    if missing:
+        raise ValueError(f"ชุด {title}: ไม่พบคลิป {missing}")
+    chans = {rows[i]["channel_id"] for i in ids}
+    if len(chans) != 1:
+        raise ValueError(f"ชุด {title}: คลิปมาจากหลายช่อง — ชุดตอนต้องมาจากช่องเดียวกัน (ต่างช่องให้ใช้ series)")
+    dates = sorted(datetime.fromisoformat(rows[i]["published_at"].replace("Z", "+00:00")) for i in ids)
+    gap = max((b - a).days for a, b in zip(dates, dates[1:]))
+    if gap > SET_MAX_GAP_DAYS:
+        raise ValueError(f"ชุด {title}: มีตอนที่ลงห่างจากตอนก่อนหน้า {gap} วัน (เกิน {SET_MAX_GAP_DAYS})")
+    if not any(p.get("counted", True) for p in parts):
+        raise ValueError(f"ชุด {title}: ต้องมีอย่างน้อย 1 ตอนที่นับเวลา")
+    set_id = set_id or ids[0]
+    if set_id not in ids:
+        raise ValueError(f"ชุด {title}: set_id ต้องเป็นหนึ่งในคลิปของชุด")
+    old = {r[0] for r in con.execute(f"SELECT DISTINCT set_id FROM set_parts WHERE video_id IN ({','.join('?' * len(ids))})", ids)}
+    con.execute(f"DELETE FROM set_parts WHERE video_id IN ({','.join('?' * len(ids))})", ids)
+    con.execute("""INSERT INTO sets (set_id, channel_id, title, note, updated_at) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(set_id) DO UPDATE SET title=excluded.title, note=excluded.note,
+                     updated_at=excluded.updated_at""", (set_id, chans.pop(), title, note, now_iso()))
+    con.executemany("""INSERT INTO set_parts (video_id, set_id, part_order, label, counted, overlap_note)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    [(p["id"], set_id, i, p.get("label"), 1 if p.get("counted", True) else 0, p.get("overlap"))
+                     for i, p in enumerate(parts, 1)])
+    for sid in old - {set_id}:  # a set that lost all its parts to this one disappears
+        if not con.execute("SELECT 1 FROM set_parts WHERE set_id = ?", (sid,)).fetchone():
+            con.execute("DELETE FROM sets WHERE set_id = ?", (sid,))
+    return set_id
+
+
+def remove_set(con, set_id: str) -> None:
+    con.execute("DELETE FROM set_parts WHERE set_id = ?", (set_id,))
+    con.execute("DELETE FROM sets WHERE set_id = ?", (set_id,))
+
+
+def set_parts(con, set_id: str) -> list:
+    return con.execute("""SELECT p.*, v.title, v.duration_seconds, v.view_count, v.like_count, v.comment_count,
+                                 v.published_at, v.thumbnail_url, v.gone_at, v.duplicate_of
+                          FROM set_parts p JOIN videos v USING (video_id)
+                          WHERE p.set_id = ? ORDER BY p.part_order""", (set_id,)).fetchall()
+
+
+def set_finished(con, video_id: str, finished: bool | None, note: str | None = None) -> None:
+    """The "จบแล้ว" tag of a scored unit — display/filter only, never part of the score."""
+    cur = con.execute("UPDATE scores SET finished = ?, finished_note = ? WHERE video_id = ?",
+                      (None if finished is None else int(finished), note, video_id))
+    if cur.rowcount == 0:
+        raise ValueError(f"{video_id} has no score yet")

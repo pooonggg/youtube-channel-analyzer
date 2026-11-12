@@ -10,8 +10,10 @@ Steps of a full run:
   1 statuses    copy the website's watched/interested/not-interested clicks into the DB
   2 channels    the viewing account's public subscriptions + channels added by hand
   3 new clips   per channel, oldest-checked first; the quota left is checked before each channel
+                (every FULL_SCAN_DAYS a channel's whole uploads list is walked, not only the newest page)
   4 views       refresh views of every clip (the view bar rises with a clip's age)
-  5 duplicates  exact re-uploads are hidden; look-alike titles are listed for Claude to decide
+  5 duplicates  exact re-uploads are hidden; look-alike titles are listed for Claude to decide,
+                and so are same-channel clips that look like parts of one story (ชุดตอน candidates)
   6 publish     build docs/index.html (new clips show as "รอคะแนน"), run tests, commit, push
   7 comments    only for eligible clips that have none yet; quota checked before each clip
   8 pack        data/to_score/<time>_pack.md = scale examples + new clips' comments
@@ -46,6 +48,7 @@ LOCK = RUNS / "update.lock"
 QUOTA_RESERVE = 500            # never plan to spend the last 500 units of the day
 NEW_CHANNEL_MAX_VIDEOS = 500   # first visit of a channel: newest 500 clips (~20 units)
 LOCK_STALE_SECONDS = 6 * 3600
+FULL_SCAN_DAYS = 30            # walk a channel's whole uploads list once a month (~1 unit per 50 clips)
 
 
 class QuotaLow(Exception):
@@ -221,22 +224,27 @@ def step_channels(con, yt, run: Run) -> None:
 
 def step_new_clips(con, yt, run: Run, new_channel_max: int) -> None:
     chans = con.execute(f"""SELECT c.channel_id, c.title, c.uploads_playlist, c.last_fetched_at,
-                                   (SELECT COUNT(*) FROM videos v WHERE v.channel_id = c.channel_id) AS n
+                                   (SELECT COUNT(*) FROM videos v WHERE v.channel_id = c.channel_id) AS n,
+                                   c.full_scan_at IS NULL OR julianday('now') - julianday(c.full_scan_at) > {FULL_SCAN_DAYS} AS due
                             FROM channels c WHERE {db.TRACKED_CHANNELS_SQL}
                             ORDER BY c.last_fetched_at IS NOT NULL, c.last_fetched_at""").fetchall()
     lines = []
     for i, ch in enumerate(chans, 1):
         first = ch["n"] == 0
+        full = bool(ch["due"]) and not first
         cap = new_channel_max if first else 5000
-        ensure_budget(con, 2 * math.ceil(cap / 50) + 1 if first else 4, f"ช่อง {ch['title']}")
+        need = 2 * math.ceil(cap / 50) + 1 if first else (math.ceil(ch["n"] / 50) + 4 if full else 4)
+        ensure_budget(con, need, f"ช่อง {ch['title']}")
         try:
             known = {r["video_id"] for r in con.execute("SELECT video_id FROM videos WHERE channel_id = ?",
                                                          (ch["channel_id"],))}
             playlist = ch["uploads_playlist"] or "UU" + ch["channel_id"][2:]
-            new_ids = yt_api.fetch_new_video_ids(yt, playlist, known, cap)
+            new_ids = yt_api.fetch_new_video_ids(yt, playlist, known, cap, full=full)
             videos = yt_api.fetch_videos(yt, new_ids)
             db.upsert_videos(con, videos)
             con.execute("UPDATE channels SET last_fetched_at = ? WHERE channel_id = ?", (db.now_iso(), ch["channel_id"]))
+            if full or first:
+                con.execute("UPDATE channels SET full_scan_at = ? WHERE channel_id = ?", (db.now_iso(), ch["channel_id"]))
             con.commit()
         except HttpError as e:
             reason = yt_api.error_reason(e)
@@ -245,7 +253,7 @@ def step_new_clips(con, yt, run: Run, new_channel_max: int) -> None:
             run.warn(f"ช่อง {ch['title']}: {yt_api.ERROR_TH.get(reason, reason)} — ข้ามช่องนี้ รอบหน้าลองใหม่")
             continue
         long_ = sum(1 for v in videos if (v["duration_seconds"] or 0) > db.MIN_DURATION_SECONDS)
-        msg = f"{ch['title']}: คลิปใหม่ {len(videos)} (ยาวเกิน 10 ชม. {long_})"
+        msg = f"{ch['title']}: คลิปใหม่ {len(videos)} (ยาวเกิน 10 ชม. {long_})" + (" · สแกนทั้งช่อง" if full else "")
         if first and len(new_ids) >= cap:
             msg += f" — ช่องใหม่ ดึงย้อนหลังแค่ {cap} คลิปล่าสุด"
         if len(videos) < len(new_ids):
@@ -304,12 +312,94 @@ def look_alikes(con, max_per_clip: int = 3) -> list[str]:
     return out
 
 
+# Episode / season numbers in a title -> (kind, first, last). "ดูรวดเดียว 3 ซีซัน" / "รวม 5 ซีซั่น" = seasons 1..N.
+_RANGE = re.compile(r"(?P<k>ตอนที่|ตอน|ep\.?|ss|ซีซั่?น|season|ภาค|part|พาร์ท)\s*(?P<a>\d+)(?:\s*(?:[-–~～]|ถึง)\s*(?P<b>\d+))?", re.I)
+_ALL_SEASONS = re.compile(r"(?:รวดเดียว|รวม)\s*(?P<n>\d+)\s*(?:ซีซั่?น|ss|season|ภาค)", re.I)
+_SEASON_WORDS = ("ss", "ซีซัน", "ซีซั่น", "season", "ภาค")
+_MARKS = re.compile(r"(?:ตอนที่|ตอน|ep\.?|ss|ซีซั่?น|season|ภาค|part|พาร์ท)\s*\d+(?:\s*(?:[-–~～]|ถึง)\s*\d+)?|"
+                    r"(?:รวดเดียว|รวม)\s*\d+\s*(?:ซีซั่?น|ss|season|ภาค)|\(?\d+\s*/\s*\d+\)?|\|.*$|by .*$", re.I)
+
+
+def episode_range(title: str) -> tuple[str, int, int] | None:
+    m = _ALL_SEASONS.search(title)
+    if m:
+        return ("season", 1, int(m["n"]))
+    m = _RANGE.search(title)
+    if not m:
+        return None
+    kind = "season" if m["k"].lower().rstrip(".") in _SEASON_WORDS else "episode"
+    a = int(m["a"]); b = int(m["b"] or a)
+    return (kind, min(a, b), max(a, b))
+
+
+def story_base(title: str) -> str:
+    """Title with episode/season markers and channel taglines removed, for comparing parts of one story."""
+    return norm_title(_MARKS.sub(" ", title))
+
+
+def set_candidates(con, min_ratio: float = 0.8) -> list[str]:
+    """Rule-based only — nothing is grouped here. Same channel, cleaned titles nearly the same
+    (>= min_ratio, the user's rule 2026-11-12: unsure = separate stories), each clip within
+    db.SET_MAX_GAP_DAYS of the previous one, and together long enough + watched enough to qualify."""
+    rows = con.execute(f"""SELECT v.video_id, v.channel_id, v.title, v.published_at, v.duration_seconds, v.view_count,
+                                  v.description, c.title AS ch, ({db.SINGLE_ELIGIBLE_SQL}) AS el
+                           FROM videos v JOIN channels c USING (channel_id)
+                           WHERE {db.TRACKED_CHANNELS_SQL} AND v.duplicate_of IS NULL AND v.gone_at IS NULL
+                             AND v.duration_seconds >= 1800
+                             AND v.video_id NOT IN (SELECT video_id FROM set_parts)
+                           ORDER BY v.channel_id, v.published_at""").fetchall()
+    by_ch: dict[str, list] = {}
+    for r in rows:
+        by_ch.setdefault(r["channel_id"], []).append(r)
+    out = []
+    for lst in by_ch.values():
+        bases = [story_base(r["title"]) for r in lst]
+        parent = list(range(len(lst)))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for i in range(len(lst)):
+            for j in range(i + 1, len(lst)):
+                if (datetime.fromisoformat(lst[j]["published_at"].replace("Z", "+00:00"))
+                        - datetime.fromisoformat(lst[i]["published_at"].replace("Z", "+00:00"))).days > db.SET_MAX_GAP_DAYS:
+                    break
+                linked = lst[j]["video_id"] in (lst[i]["description"] or "") or lst[i]["video_id"] in (lst[j]["description"] or "")
+                if not linked and (len(bases[i]) < 8 or len(bases[j]) < 8):
+                    continue
+                if linked or difflib.SequenceMatcher(None, bases[i], bases[j]).ratio() >= min_ratio:
+                    parent[find(j)] = find(i)
+        groups: dict[int, list] = {}
+        for i in range(len(lst)):
+            groups.setdefault(find(i), []).append(lst[i])
+        for g in groups.values():
+            if len(g) < 2 or sum(r["duration_seconds"] for r in g) <= db.MIN_DURATION_SECONDS:
+                continue
+            age = lambda r: (datetime.now(timezone.utc) - datetime.fromisoformat(r["published_at"].replace("Z", "+00:00"))).total_seconds() / 86400
+            if not any((r["view_count"] or 0) > db.required_views(age(r)) for r in g):
+                continue
+            out.append(f"- ช่อง {g[0]['ch']} · {len(g)} คลิป รวม {sum(r['duration_seconds'] for r in g) / 3600:.1f} ชม. (ก่อนตัดส่วนที่ทับ)")
+            for r in g:
+                rng = episode_range(r["title"])
+                tag = f" [{rng[0]} {rng[1]}–{rng[2]}]" if rng else ""
+                out.append(f"  - `{r['video_id']}` {r['published_at'][:10]} {r['duration_seconds'] / 3600:.1f}h "
+                           f"{ingest._short(r['view_count'])} วิว{' (เข้าเกณฑ์เดี่ยวอยู่แล้ว)' if r['el'] else ''}{tag} | {r['title'][:80]}")
+    return out
+
+
 def step_duplicates(con, run: Run) -> list[str]:
     hidden = ingest.mark_duplicates(con)
     alikes = look_alikes(con)
-    run.log(f"[5] คลิปซ้ำแบบชื่อตรงกันทุกตัวอักษร (ซ่อนอัตโนมัติ) {hidden} คลิป · ชื่อคล้ายที่ต้องให้ Claude ตัดสิน {len(alikes)} คู่")
+    cands = set_candidates(con)
+    n_sets = sum(1 for l in cands if l.startswith("- "))
+    run.log(f"[5] คลิปซ้ำแบบชื่อตรงกันทุกตัวอักษร (ซ่อนอัตโนมัติ) {hidden} คลิป · ชื่อคล้ายที่ต้องให้ Claude ตัดสิน {len(alikes)} คู่"
+            f" · ชุดตอนที่น่าจะรวมได้ {n_sets} กลุ่ม")
     run.section("ชื่อคล้ายกัน (ระบบไม่ซ่อนเอง ให้ Claude ตัดสิน)", alikes)
-    return alikes
+    run.section("ชุดตอนที่น่าจะรวมได้ (ช่องเดียวกัน ชื่อแทบเหมือนกัน — Claude ยืนยันแล้ว `ingest.py set-sets`)", cands)
+    return alikes + ([""] + ["## ชุดตอนที่น่าจะรวมได้ (ยืนยันแล้ว `ingest.py set-sets` ก่อนให้คะแนน · "
+                             "ไม่แน่ใจ = ถือเป็นคนละเรื่อง)", *cands] if cands else [])
 
 
 def step_publish(run: Run, message: str) -> None:
@@ -342,7 +432,7 @@ def step_publish(run: Run, message: str) -> None:
 
 def step_comments(con, yt, run: Run) -> None:
     rows = con.execute(f"""SELECT v.video_id, v.title, v.comment_count FROM videos v
-                           WHERE {db.ELIGIBLE_SQL} AND v.comments_fetched_at IS NULL
+                           WHERE {db.IN_LIBRARY_SQL} AND v.comments_fetched_at IS NULL
                            ORDER BY v.view_count DESC""").fetchall()
     run.log(f"[7] คลิปเข้าเกณฑ์ที่ยังไม่มีคอมเมนต์ {len(rows)} คลิป")
     for i, r in enumerate(rows, 1):
@@ -361,7 +451,9 @@ def step_comments(con, yt, run: Run) -> None:
 def step_pack(con, run: Run, alikes: list[str]) -> None:
     ids = [r["video_id"] for r in con.execute(f"""
         SELECT v.video_id FROM videos v LEFT JOIN scores s USING (video_id)
-        WHERE {db.ELIGIBLE_SQL} AND s.video_id IS NULL AND v.comments_fetched_at IS NOT NULL""")]
+        WHERE {db.ELIGIBLE_SQL} AND s.video_id IS NULL AND v.comments_fetched_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM set_parts p JOIN videos pv USING (video_id)
+                          WHERE p.set_id = v.video_id AND pv.comments_fetched_at IS NULL AND pv.gone_at IS NULL)""")]
     waiting = con.execute(f"""SELECT COUNT(*) FROM videos v LEFT JOIN scores s USING (video_id)
                               WHERE {db.ELIGIBLE_SQL} AND s.video_id IS NULL""").fetchone()[0]
     if waiting > len(ids):

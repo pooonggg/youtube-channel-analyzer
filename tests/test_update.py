@@ -90,8 +90,8 @@ def test_new_clips_visits_oldest_checked_first_and_resumes(tmp_path, monkeypatch
     con.execute("UPDATE channels SET last_fetched_at = '2026-10-01' WHERE channel_id = 'B'")
     fake = FakeYT()
 
-    def fetch_ids(yt, playlist, known, cap):
-        fake.visited.append((playlist, cap))
+    def fetch_ids(yt, playlist, known, cap, full=False):
+        fake.visited.append((playlist, cap, full))
         if playlist == "UUB":
             raise update.QuotaLow("stop")   # simulate running out after the first two channels
         return [playlist + "-new"]
@@ -103,7 +103,8 @@ def test_new_clips_visits_oldest_checked_first_and_resumes(tmp_path, monkeypatch
     with pytest.raises(update.QuotaLow):
         update.step_new_clips(con, None, run, new_channel_max=500)
     # never-checked channel first (with the first-visit cap), then the oldest-checked one
-    assert fake.visited == [("UUN", 500), ("UUB", 5000)]
+    # (A and B have never had a full scan, so their visit walks the whole uploads list)
+    assert fake.visited == [("UUN", 500, False), ("UUB", 5000, True)]
     checked = dict(con.execute("SELECT channel_id, last_fetched_at FROM channels").fetchall())
     assert checked["N"] is not None and checked["B"] == "2026-10-01"   # B stays first in line for the next run
 

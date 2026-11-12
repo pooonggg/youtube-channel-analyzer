@@ -53,23 +53,37 @@ def split_summary(text: str | None) -> tuple[str, str]:
 
 
 def load_videos() -> list[dict]:
+    return load_data()[0]
+
+
+def load_data() -> tuple[list[dict], dict]:
+    """(clips, sets). Clips = every clip shown: eligible single clips and all parts of eligible sets.
+    A set is one card on the site; its lead clip (set_id) carries the set's score, the other parts
+    only appear in the set's episode list."""
     con = db.connect()
     rows = con.execute(f"""
         SELECT v.video_id, v.channel_id, v.title, v.published_at, v.duration_seconds, v.view_count, v.like_count,
                v.comment_count, v.thumbnail_url, c.title AS channel, c.url AS channel_url,
-               s.score, s.tie_rank, s.summary, s.reasons, s.series, s.series_order
+               s.score, s.tie_rank, s.summary, s.reasons, s.series, s.series_order, s.finished, s.finished_note,
+               p.set_id, p.part_order, p.label, p.counted, p.overlap_note
         FROM videos v JOIN channels c USING (channel_id) LEFT JOIN scores s USING (video_id)
-        WHERE {db.ELIGIBLE_SQL}
+        LEFT JOIN set_parts p USING (video_id)
+        WHERE {db.IN_LIBRARY_SQL}
         ORDER BY s.score IS NULL, s.score DESC, COALESCE(s.tie_rank, 9999), v.view_count DESC""").fetchall()
+    set_rows = {r["set_id"]: r for r in con.execute("SELECT * FROM sets")}
     langs = db.channel_languages(con)
     con.close()
     videos, ranks = [], {}  # Thai-dub clips and other-language clips are ranked separately (separate tabs)
+    sets: dict[str, dict] = {}
     for r in rows:
         lang = langs.get(r["channel_id"], "th")
         foreign = lang != "th"
-        if r["score"] is not None:
+        sid = r["set_id"]
+        unit = sid is None or sid == r["video_id"]   # a non-lead part is never ranked on its own
+        score = r["score"] if unit else None
+        if score is not None:
             ranks[foreign] = ranks.get(foreign, 0) + 1
-        tag, rest = split_summary(r["summary"])
+        tag, rest = split_summary(r["summary"]) if unit else ("", "")
         videos.append({
             "tag": html.escape(tag),
             "lang": lang, "foreign": foreign, "langLabel": db.LANGUAGE_LABELS.get(lang, lang),
@@ -77,15 +91,32 @@ def load_videos() -> list[dict]:
             "dur": r["duration_seconds"], "durText": yt_api.fmt_duration(r["duration_seconds"] or 0),
             "views": r["view_count"], "likes": r["like_count"], "comments": r["comment_count"],
             "thumb": r["thumbnail_url"], "ch": r["channel"], "chUrl": r["channel_url"],
-            "score": r["score"], "rank": ranks[foreign] if r["score"] is not None else None,
-            "summary": md_to_html(rest), "reasons": html.escape(r["reasons"] or ""),
-            "series": r["series"], "order": r["series_order"],
+            "score": score, "rank": ranks[foreign] if score is not None else None,
+            "summary": md_to_html(rest) if unit else "", "reasons": html.escape(r["reasons"] or "") if unit else "",
+            "series": r["series"] if unit else None, "order": r["series_order"] if unit else None,
+            "finished": bool(r["finished"]) if unit and r["finished"] is not None else None,
+            "finNote": html.escape(r["finished_note"] or "") if unit else "",
+            "set": sid, "part": r["part_order"], "plabel": r["label"] or "",
+            "counted": bool(r["counted"]) if sid else True, "overlap": r["overlap_note"] or "",
         })
-    return videos
+        if sid:
+            st = sets.setdefault(sid, {"title": set_rows[sid]["title"], "note": set_rows[sid]["note"] or "",
+                                       "parts": [], "dur": 0, "views": 0, "likes": 0, "comments": 0})
+            st["parts"].append((r["part_order"], r["video_id"]))
+            if r["counted"]:
+                st["dur"] += r["duration_seconds"] or 0
+            st["views"] += r["view_count"] or 0
+            st["likes"] += r["like_count"] or 0
+            st["comments"] += r["comment_count"] or 0
+    for st in sets.values():
+        st["parts"] = [vid for _, vid in sorted(st["parts"])]
+        st["n"] = len(st["parts"])
+        st["durText"] = yt_api.fmt_duration(st["dur"])
+    return videos, sets
 
 
 def main() -> None:
-    videos = load_videos()
+    videos, sets = load_data()
     ids = [v["id"] for v in videos]
     dup = sorted({i for i in ids if ids.count(i) > 1})
     if dup:  # one card (one link) per video — never publish the same video twice
@@ -94,13 +125,13 @@ def main() -> None:
     baseline = {r["video_id"]: r["status"] for r in con.execute("SELECT video_id, status FROM user_status")}
     con.close()
     data = {"generatedAt": datetime.now(timezone.utc).isoformat(timespec="minutes"), "videos": videos,
-            "baseline": baseline, "minViews": db.MIN_VIEWS}
+            "sets": sets, "baseline": baseline, "minViews": db.MIN_VIEWS}
     page = TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__DATA__*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(page, encoding="utf-8")
     (OUT.parent / ".nojekyll").write_text("", encoding="utf-8")
-    print(f"สร้าง {OUT} ({len(videos)} คลิป, {OUT.stat().st_size // 1024} KB)")
+    print(f"สร้าง {OUT} ({len(videos)} คลิป, ชุดตอน {len(sets)} ชุด, {OUT.stat().st_size // 1024} KB)")
 
 
 if __name__ == "__main__":
