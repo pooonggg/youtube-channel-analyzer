@@ -12,7 +12,8 @@ Steps of a full run:
   3 new clips   per channel, oldest-checked first; the quota left is checked before each channel
                 (every FULL_SCAN_DAYS a channel's whole uploads list is walked, not only the newest page)
   4 views       refresh views of every clip (the view bar rises with a clip's age)
-  5 duplicates  exact re-uploads are hidden; look-alike titles are listed for Claude to decide,
+  5 duplicates  new episodes of a set already in the library are appended (any length / views) or listed;
+                exact re-uploads are hidden; look-alike titles are listed for Claude to decide,
                 and so are same-channel clips that look like parts of one story (ชุดตอน candidates)
   6 publish     build docs/index.html (new clips show as "รอคะแนน"), run tests, commit, push
   7 comments    only for eligible clips that have none yet; quota checked before each clip
@@ -398,8 +399,107 @@ def set_candidates(con, min_ratio: float = 0.8) -> list[str]:
     return out
 
 
+# New episodes of a story that is already in the library (user 2026-11-23): the new clip joins whatever
+# its own length or views. Sure = same channel + title the same once episode marks are cut (>= 90%) +
+# its episode number continues after the set's last one + uploaded after the newest part -> appended by code.
+# Anything less sure (70-90%, no episode number, a compilation, a series of single clips) is only listed.
+EXT_AUTO_RATIO = 0.9
+EXT_MAYBE_RATIO = 0.7
+
+
+def _ts(iso: str) -> datetime:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+def _range_label(rng) -> str | None:
+    if not rng:
+        return None
+    kind, a, b = rng
+    return f"{'SS' if kind == 'season' else 'ตอน'} {a}" + (f"–{b}" if b != a else "")
+
+
+def _live_parts(con, set_id: str) -> list:
+    return [p for p in db.set_parts(con, set_id) if p["gone_at"] is None and p["duplicate_of"] is None]
+
+
+def extend_sets(con) -> tuple[list[str], list[str]]:
+    """(added, maybe) report lines. Appends sure new episodes to their set (db.append_set_part)."""
+    rejected = {(r[0], r[1]) for r in con.execute("SELECT video_id, target FROM not_parts")}
+    added, maybe = [], []
+    for st in con.execute("SELECT set_id, channel_id, title FROM sets").fetchall():
+        parts = _live_parts(con, st["set_id"])
+        if not parts:
+            continue
+        first = min(p["published_at"] for p in parts)
+        cands = con.execute("""SELECT video_id, title, published_at, duration_seconds, view_count, description
+                               FROM videos WHERE channel_id = ? AND duplicate_of IS NULL AND gone_at IS NULL
+                                 AND duration_seconds >= 1800 AND published_at > ?
+                                 AND video_id NOT IN (SELECT video_id FROM set_parts)
+                               ORDER BY published_at""", (st["channel_id"], first)).fetchall()
+        for v in cands:
+            if (v["video_id"], st["set_id"]) in rejected:
+                continue
+            last = max(_ts(p["published_at"]) for p in parts)
+            if (_ts(v["published_at"]) - last).days > db.SET_MAX_GAP_DAYS:
+                continue
+            base = story_base(v["title"])
+            linked = any(p["video_id"] in (v["description"] or "") for p in parts)
+            ratio = max((difflib.SequenceMatcher(None, base, story_base(p["title"])).ratio() for p in parts), default=0)
+            if not linked and (len(base) < 8 or ratio < EXT_MAYBE_RATIO):
+                continue
+            rng = episode_range(v["title"])
+            ends = [r[2] for r in (episode_range(p["title"]) for p in parts) if r and rng and r[0] == rng[0]]
+            continues = bool(rng and ends and rng[1] > max(ends) and _ts(v["published_at"]) >= last)
+            info = (f"`{v['video_id']}` {v['published_at'][:10]} {v['duration_seconds'] / 3600:.1f}h "
+                    f"{ingest._short(v['view_count'])} วิว | {v['title'][:70]}")
+            if ratio >= EXT_AUTO_RATIO and continues:
+                db.append_set_part(con, st["set_id"], v["video_id"], _range_label(rng))
+                parts = _live_parts(con, st["set_id"])
+                added.append(f"- ชุด «{st['title']}» (`{st['set_id']}`) + {info}")
+            else:
+                why = ("คำอธิบายคลิปลิงก์ถึงตอนเก่า" if linked else f"ชื่อคล้าย {ratio:.0%}") + (
+                    "" if continues else " · เลขตอนไม่ได้ต่อจากตอนล่าสุด/ไม่มีเลขตอน")
+                maybe.append(f"- ชุด «{st['title']}» (`{st['set_id']}`) ? {info} ({why})")
+    con.commit()
+    return added, maybe
+
+
+def series_followups(con) -> list[str]:
+    """Clips outside the library from the same channel as a clip of a series, uploaded after it, with a
+    similar title — maybe the next part. Listed only; if it is, make a set with that clip (set-sets)."""
+    rejected = {(r[0], r[1]) for r in con.execute("SELECT video_id, target FROM not_parts")}
+    lib = {r[0] for r in con.execute(f"SELECT v.video_id FROM videos v WHERE {db.IN_LIBRARY_SQL}")}
+    out = []
+    members = con.execute("""SELECT s.series, v.video_id, v.channel_id, v.title, v.published_at FROM scores s
+                             JOIN videos v USING (video_id) WHERE s.series IS NOT NULL
+                               AND v.video_id NOT IN (SELECT video_id FROM set_parts)""").fetchall()
+    for m in members:
+        base = story_base(m["title"])
+        if len(base) < 8:
+            continue
+        for v in con.execute("""SELECT video_id, title, published_at, duration_seconds, view_count FROM videos
+                                WHERE channel_id = ? AND duplicate_of IS NULL AND gone_at IS NULL AND duration_seconds >= 1800
+                                  AND published_at > ? AND video_id NOT IN (SELECT video_id FROM set_parts)""",
+                             (m["channel_id"], m["published_at"])):
+            if v["video_id"] in lib or (v["video_id"], m["series"]) in rejected:
+                continue
+            if (_ts(v["published_at"]) - _ts(m["published_at"])).days > db.SET_MAX_GAP_DAYS:
+                continue
+            ratio = difflib.SequenceMatcher(None, base, story_base(v["title"])).ratio()
+            if ratio >= EXT_MAYBE_RATIO:
+                out.append(f"- ซีรีส์ «{m['series']}» ต่อจาก `{m['video_id']}` ? `{v['video_id']}` {v['published_at'][:10]} "
+                           f"{v['duration_seconds'] / 3600:.1f}h {ingest._short(v['view_count'])} วิว ชื่อคล้าย {ratio:.0%} | {v['title'][:70]}")
+    return out
+
+
 def step_duplicates(con, run: Run) -> list[str]:
     hidden = ingest.mark_duplicates(con)
+    ext_added, ext_maybe = extend_sets(con)
+    ext_maybe += series_followups(con)
+    run.log(f"[5] ตอนใหม่ของเรื่องในคลัง: เพิ่มเข้าชุดเอง {len(ext_added)} คลิป · ให้ Claude ตัดสิน {len(ext_maybe)} คลิป")
+    run.section("ตอนใหม่ที่เพิ่มเข้าชุดเดิมให้เอง (ไม่ต้องผ่านเกณฑ์ยาว/วิว)", ext_added)
+    run.section("อาจเป็นตอนใหม่ของเรื่องในคลัง — ใช่ → `ingest.py add-part <set_id> <id>` "
+                "(ซีรีส์: `set-sets` รวมกับคลิปเดิม) · ไม่ใช่ → `ingest.py not-part <id> <set_id|ชื่อซีรีส์>`", ext_maybe)
     alikes = look_alikes(con)
     cands = set_candidates(con)
     n_sets = sum(1 for l in cands if l.startswith("- "))
@@ -407,6 +507,8 @@ def step_duplicates(con, run: Run) -> list[str]:
             f" · ชุดตอนที่น่าจะรวมได้ {n_sets} กลุ่ม")
     run.section("ชื่อคล้ายกัน (ระบบไม่ซ่อนเอง ให้ Claude ตัดสิน)", alikes)
     run.section("ชุดตอนที่น่าจะรวมได้ (ช่องเดียวกัน ชื่อแทบเหมือนกัน — Claude ยืนยันแล้ว `ingest.py set-sets`)", cands)
+    alikes = alikes + ([""] + ["## อาจเป็นตอนใหม่ของเรื่องในคลัง (ใช่ → `ingest.py add-part <set_id> <id>` · "
+                               "ไม่ใช่ → `ingest.py not-part <id> <set_id|ซีรีส์>` · ไม่แน่ใจ = ไม่ใช่)", *ext_maybe] if ext_maybe else [])
     return alikes + ([""] + ["## ชุดตอนที่น่าจะรวมได้ (ยืนยันแล้ว `ingest.py set-sets` ก่อนให้คะแนน · "
                              "ไม่แน่ใจ = ถือเป็นคนละเรื่อง)", *cands] if cands else [])
 
@@ -486,6 +588,11 @@ def step_finish(con, yt, run: Run) -> None:
 
 
 def step_pack(con, run: Run, alikes: list[str]) -> None:
+    review, n_sets = ingest.export_new_parts(con)
+    if review:
+        run.log(f"[8] ไฟล์ตรวจตอนใหม่ของชุดที่มีคะแนนแล้ว: {review.relative_to(ROOT).as_posix()} ({n_sets} ชุด)")
+        run.section(f"ตอนใหม่รอตรวจ {n_sets} ชุด (อ่านเฉพาะคอมเมนต์ตอนใหม่ → `ingest.py review-parts <file>`)",
+                    [f"- {review.relative_to(ROOT).as_posix()}"])
     ids = [r["video_id"] for r in con.execute(f"""
         SELECT v.video_id FROM videos v LEFT JOIN scores s USING (video_id)
         WHERE {db.ELIGIBLE_SQL} AND s.video_id IS NULL AND v.comments_fetched_at IS NOT NULL

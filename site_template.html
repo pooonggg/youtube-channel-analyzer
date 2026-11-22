@@ -111,6 +111,7 @@ select.field option { background: var(--surface-2); }
 .card.is-set:hover .poster img { transform: none; filter: brightness(1.06); }
 .c-set { display: inline-flex; align-items: center; gap: 5px; background: var(--accent); color: #1a0e07; font-family: var(--sans); font-weight: 600; font-size: 12px; }
 .c-set svg { width: 13px; height: 13px; }
+.new-part { color: var(--accent); }
 .card.is-watched .poster img { filter: saturate(.55) brightness(.8); }
 .c-body { padding: 12px 2px 0; display: flex; flex-direction: column; gap: 5px; flex: 1; }
 .c-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--faint); }
@@ -562,6 +563,9 @@ const rankText = v => v.rank ? `#${v.rank}` : "";
 // a finished story under 10 h — in the library only because it ends (user 2026-11-12)
 const isShortFinished = u => !u.isSet && u.finished && u.dur < 10 * 3600;
 const setChip = u => `${u.parts.length} คลิป · รวม ${hours(u.dur)}`;
+// a set that got a new episode in the last NEW_PART_DAYS days (user 2026-11-23)
+const NEW_PART_DAYS = 14;
+const isNewPart = iso => !!iso && now - Date.parse(iso) < NEW_PART_DAYS * 864e5;
 
 // ---------- status ----------
 // ชุดตอน: ติ๊ก "ดูแล้ว" ได้ทีละคลิป · สถานะของทั้งชุด = ดูครบทุกคลิปที่นับเวลา → ดูแล้ว, ดูไปบางคลิป → สนใจ (กำลังดู)
@@ -615,7 +619,7 @@ function card(u, i, featured) {
       ${!featured && st && st !== "not_interested" ? `<span class="chip-on-img c-state ${st}">${stLabel}</span>` : ""}
       ${u.finished ? `<span class="chip-on-img c-fin">${ICON.watched}${isShortFinished(u) ? "จบในคลิป" : "จบแล้ว"}</span>` : ""}
       ${u.foreign ? `<span class="chip-on-img c-lang">${esc(u.langLabel)}</span>` : ""}
-      ${u.isSet ? `<span class="chip-on-img c-dur c-set">${ICON.list}${setChip(u)}</span>` : `<span class="chip-on-img c-dur">${u.durText}</span>`}
+      ${u.isSet ? `<span class="chip-on-img c-dur c-set">${ICON.list}${isNewPart(u.S.newAt) ? "ตอนใหม่ · " : ""}${setChip(u)}</span>` : `<span class="chip-on-img c-dur">${u.durText}</span>`}
     </a>
     <div class="c-body">
       <div class="c-row">
@@ -706,7 +710,7 @@ function partsList(u) {
       return `<div class="ep part${p.counted ? "" : " skip"}${done ? " done" : ""}">
         <span class="o">${p.part}</span>
         <a href="${ytUrl(p.id)}" target="_blank" rel="noopener" title="เปิดบน YouTube">
-          <span class="t">${p.plabel ? `<b>${esc(p.plabel)}</b> · ` : ""}${esc(p.title)}</span>
+          <span class="t">${isNewPart(p.added) ? `<b class="new-part">ใหม่</b> ` : ""}${p.plabel ? `<b>${esc(p.plabel)}</b> · ` : ""}${esc(p.title)}</span>
           <span class="s">${p.durText} · ${shortNum(p.views)} วิว · ลง ${timeAgo(p.pubTs)}${p.counted ? "" : ` · ไม่นับเวลา${p.overlap ? ": " + esc(p.overlap) : ""}`}</span>
         </a>
         <button type="button" class="tick" data-part="${p.id}" aria-pressed="${done}" title="${done ? "ยกเลิกดูแล้ว" : "ดูคลิปนี้แล้ว"}" aria-label="ดูคลิปที่ ${p.part} แล้ว">${ICON.watched}</button>

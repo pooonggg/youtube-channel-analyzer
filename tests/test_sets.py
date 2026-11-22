@@ -138,3 +138,67 @@ def test_finish_signals_counts_both_sides():
             {"text": "ไม่จบ", "like_count": 0, "parent_id": None}]
     s = ingest.finish_signals(rows)
     assert s.startswith("finish: done=1") and "open=2" in s
+
+
+def _story(con):
+    _channel(con)
+    db.upsert_videos(con, [
+        _video("E1", title="(ตอนที่1)หลุดเข้าเกมเอาชีวิตรอดกลางทะเล 5 พันล้านคน", dur=6 * H, views=90_000,
+               pub="2026-10-01T00:00:00Z"),
+        _video("E2", title="(ตอนที่2)หลุดเข้าเกมเอาชีวิตรอดกลางทะเล 5 พันล้านคน", dur=6 * H, views=30_000,
+               pub="2026-10-10T00:00:00Z"),
+    ])
+    db.save_set(con, "หลุดเข้าเกมเอาชีวิตรอดกลางทะเล", [{"id": "E1"}, {"id": "E2"}])
+    db.upsert_score(con, "E1", 80, "s", "เดิม", 10, tie_rank=3, series="ทะเล")
+    con.commit()
+
+
+def test_new_episode_joins_its_set_whatever_its_views(tmp_path):
+    con = db.connect(tmp_path / "t.db")
+    _story(con)
+    db.upsert_videos(con, [
+        # part 3: short and few views — would never pass on its own
+        _video("E3", title="(ตอนที่3)หลุดเข้าเกมเอาชีวิตรอดกลางทะเล 5 พันล้านคน", dur=2 * H, views=900,
+               pub="2026-11-17T00:00:00Z"),
+        # same story, no episode number -> only listed for Claude
+        _video("EX", title="หลุดเข้าเกมเอาชีวิตรอดกลางทะเล 5 พันล้านคน ฉบับรวม", dur=3 * H, pub="2026-11-18T00:00:00Z"),
+        _video("Z", title="เกิดใหม่เป็นฮ่องเต้ ตอนที่ 3", dur=3 * H, pub="2026-11-18T00:00:00Z"),
+    ])
+    added, maybe = update.extend_sets(con)
+    assert len(added) == 1 and "E3" in added[0]
+    assert len(maybe) == 1 and "EX" in maybe[0]
+    assert [p["video_id"] for p in db.set_parts(con, "E1")] == ["E1", "E2", "E3"]
+    assert db.set_parts(con, "E1")[2]["reviewed"] == 0 and db.set_parts(con, "E1")[2]["label"] == "ตอน 3"
+    assert "E3" in _in_library(con)
+    db.mark_not_part(con, "EX", "E1")
+    assert update.extend_sets(con) == ([], [])          # decided once, never listed again
+
+
+def test_review_new_parts_keeps_rank_and_series(tmp_path):
+    con = db.connect(tmp_path / "t.db")
+    _story(con)
+    db.upsert_videos(con, [_video("E3", title="(ตอนที่3)หลุดเข้าเกมเอาชีวิตรอดกลางทะเล 5 พันล้านคน", dur=2 * H,
+                                  pub="2026-11-17T00:00:00Z")])
+    db.append_set_part(con, "E1", "E3", "ตอน 3")
+    con.execute("UPDATE videos SET comments_fetched_at = 'x' WHERE video_id = 'E3'")
+    path, n = ingest.export_new_parts(con)
+    assert n == 1 and "E3" in path.read_text(encoding="utf-8")
+    path.unlink()
+    ingest.review_parts(con, {"E1": {"note": "เพิ่มตอน 3: เสียงดีเหมือนเดิม", "score": 82}})
+    sc = con.execute("SELECT * FROM scores WHERE video_id = 'E1'").fetchone()
+    assert sc["score"] == 82 and sc["tie_rank"] == 3 and sc["series"] == "ทะเล"
+    assert sc["reasons"] == "เดิม · เพิ่มตอน 3: เสียงดีเหมือนเดิม"
+    assert ingest.export_new_parts(con) == (None, 0)
+
+
+def test_append_set_part_rules(tmp_path):
+    con = db.connect(tmp_path / "t.db")
+    _story(con)
+    _channel(con, "D")
+    db.upsert_videos(con, [_video("O", cid="D", pub="2026-11-01T00:00:00Z"), _video("L", pub="2027-06-01T00:00:00Z")])
+    with pytest.raises(ValueError, match="คนละช่อง"):
+        db.append_set_part(con, "E1", "O")
+    with pytest.raises(ValueError, match="ห่าง"):
+        db.append_set_part(con, "E1", "L")
+    with pytest.raises(ValueError, match="ชุดอื่น"):
+        db.append_set_part(con, "E1", "E2")

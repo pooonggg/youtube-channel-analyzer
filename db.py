@@ -103,6 +103,14 @@ CREATE TABLE IF NOT EXISTS finish_checks (
     n_comments  INTEGER,
     checked_at  TEXT NOT NULL
 );
+-- "this clip is NOT the next part of that set / series" (Claude decided, user rule 2026-11-23) — so the
+-- same look-alike is not listed again on every run. target = set_id or series name.
+CREATE TABLE IF NOT EXISTS not_parts (
+    video_id    TEXT NOT NULL REFERENCES videos(video_id),
+    target      TEXT NOT NULL,
+    decided_at  TEXT NOT NULL,
+    PRIMARY KEY (video_id, target)
+);
 """
 
 
@@ -140,6 +148,10 @@ MIGRATIONS = {
                  # known page, so clips that show up late in the middle of the list would be missed)
                  "full_scan_at": "TEXT"},
     # finished: 1 = comments make it clear the story is complete ("จบแล้ว" tag) — never part of the score
+    # added_at: when a part was appended to a set that already existed (new episode, user 2026-11-23) ·
+    # reviewed: 0 = appended to an already-scored set and Claude has not read its comments yet (NULL = part of
+    # the set when it was scored)
+    "set_parts": {"added_at": "TEXT", "reviewed": "INTEGER"},
     "scores": {"tie_rank": "INTEGER", "series": "TEXT", "series_order": "INTEGER",
                "finished": "INTEGER", "finished_note": "TEXT"},
 }
@@ -370,18 +382,69 @@ def save_set(con, title: str, parts: list[dict], note: str | None = None, set_id
     if set_id not in ids:
         raise ValueError(f"ชุด {title}: set_id ต้องเป็นหนึ่งในคลิปของชุด")
     old = {r[0] for r in con.execute(f"SELECT DISTINCT set_id FROM set_parts WHERE video_id IN ({','.join('?' * len(ids))})", ids)}
+    keep = {r["video_id"]: r for r in con.execute(   # regrouping keeps "new episode" info of a part
+        f"SELECT video_id, added_at, reviewed FROM set_parts WHERE video_id IN ({','.join('?' * len(ids))})", ids)}
     con.execute(f"DELETE FROM set_parts WHERE video_id IN ({','.join('?' * len(ids))})", ids)
     con.execute("""INSERT INTO sets (set_id, channel_id, title, note, updated_at) VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(set_id) DO UPDATE SET title=excluded.title, note=excluded.note,
                      updated_at=excluded.updated_at""", (set_id, chans.pop(), title, note, now_iso()))
-    con.executemany("""INSERT INTO set_parts (video_id, set_id, part_order, label, counted, overlap_note)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    [(p["id"], set_id, i, p.get("label"), 1 if p.get("counted", True) else 0, p.get("overlap"))
+    con.executemany("""INSERT INTO set_parts (video_id, set_id, part_order, label, counted, overlap_note, added_at, reviewed)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [(p["id"], set_id, i, p.get("label"), 1 if p.get("counted", True) else 0, p.get("overlap"),
+                      keep[p["id"]]["added_at"] if p["id"] in keep else None,
+                      keep[p["id"]]["reviewed"] if p["id"] in keep else None)
                      for i, p in enumerate(parts, 1)])
     for sid in old - {set_id}:  # a set that lost all its parts to this one disappears
         if not con.execute("SELECT 1 FROM set_parts WHERE set_id = ?", (sid,)).fetchone():
             con.execute("DELETE FROM sets WHERE set_id = ?", (sid,))
     return set_id
+
+
+def append_set_part(con, set_id: str, video_id: str, label: str | None = None) -> None:
+    """A new episode of a set that already exists (user 2026-11-23): it joins whatever its own length or
+    views — the story is already in the library. Same channel, within SET_MAX_GAP_DAYS of the newest part.
+    When the set already has a score the part is marked reviewed = 0, so Claude reads only its comments
+    (ingest.py new-parts review) instead of re-scoring the whole set."""
+    st = con.execute("SELECT * FROM sets WHERE set_id = ?", (set_id,)).fetchone()
+    v = con.execute("SELECT * FROM videos WHERE video_id = ?", (video_id,)).fetchone()
+    if not st or not v:
+        raise ValueError(f"ไม่พบชุด {set_id} หรือคลิป {video_id}")
+    if v["channel_id"] != st["channel_id"]:
+        raise ValueError(f"คลิป {video_id} มาจากคนละช่องกับชุด {set_id} — ต่างช่องให้ใช้ series")
+    if con.execute("SELECT 1 FROM set_parts WHERE video_id = ?", (video_id,)).fetchone():
+        raise ValueError(f"คลิป {video_id} อยู่ในชุดอื่นแล้ว")
+    newest = con.execute("SELECT MAX(v.published_at) FROM set_parts p JOIN videos v USING (video_id) "
+                         "WHERE p.set_id = ?", (set_id,)).fetchone()[0]
+    gap = (datetime.fromisoformat(v["published_at"].replace("Z", "+00:00"))
+           - datetime.fromisoformat(newest.replace("Z", "+00:00"))).days
+    if gap > SET_MAX_GAP_DAYS:
+        raise ValueError(f"คลิป {video_id} ลงห่างจากตอนล่าสุดของชุด {gap} วัน (เกิน {SET_MAX_GAP_DAYS})")
+    order = con.execute("SELECT COALESCE(MAX(part_order), 0) + 1 FROM set_parts WHERE set_id = ?", (set_id,)).fetchone()[0]
+    scored = con.execute("SELECT 1 FROM scores WHERE video_id = ?", (set_id,)).fetchone() is not None
+    con.execute("""INSERT INTO set_parts (video_id, set_id, part_order, label, counted, added_at, reviewed)
+                   VALUES (?, ?, ?, ?, 1, ?, ?)""", (video_id, set_id, order, label, now_iso(), 0 if scored else None))
+    con.execute("UPDATE sets SET updated_at = ? WHERE set_id = ?", (now_iso(), set_id))
+
+
+def mark_not_part(con, video_id: str, target: str) -> None:
+    con.execute("INSERT OR REPLACE INTO not_parts (video_id, target, decided_at) VALUES (?, ?, ?)",
+                (video_id, target, now_iso()))
+
+
+def review_new_parts(con, set_id: str, note: str, score: float | None = None) -> int:
+    """Claude read the comments of the new parts: keep or adjust the set's score, add one line to the
+    reasons, and mark the parts reviewed. Writes the scores row directly so tie_rank/series survive."""
+    n = con.execute("UPDATE set_parts SET reviewed = 1 WHERE set_id = ? AND reviewed = 0", (set_id,)).rowcount
+    row = con.execute("SELECT reasons FROM scores WHERE video_id = ?", (set_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"ชุด {set_id} ยังไม่มีคะแนน — ให้คะแนนทั้งชุดด้วย import-scores")
+    reasons = ((row["reasons"] or "").rstrip() + (" · " if row["reasons"] else "") + note) if note else row["reasons"]
+    if score is None:
+        con.execute("UPDATE scores SET reasons = ? WHERE video_id = ?", (reasons, set_id))
+    else:
+        con.execute("UPDATE scores SET reasons = ?, score = ?, scored_at = ? WHERE video_id = ?",
+                    (reasons, float(score), now_iso(), set_id))
+    return n
 
 
 def remove_set(con, set_id: str) -> None:

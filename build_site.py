@@ -67,7 +67,7 @@ def load_data() -> tuple[list[dict], dict]:
                s.score, s.tie_rank, s.summary, s.reasons, s.series, s.series_order,
                COALESCE(s.finished, CASE WHEN f.verdict = 'done' THEN 1 END) AS finished,
                COALESCE(s.finished_note, f.note) AS finished_note,
-               p.set_id, p.part_order, p.label, p.counted, p.overlap_note
+               p.set_id, p.part_order, p.label, p.counted, p.overlap_note, p.added_at
         FROM videos v JOIN channels c USING (channel_id) LEFT JOIN scores s USING (video_id)
         LEFT JOIN set_parts p USING (video_id) LEFT JOIN finish_checks f USING (video_id)
         WHERE {db.IN_LIBRARY_SQL}
@@ -100,10 +100,12 @@ def load_data() -> tuple[list[dict], dict]:
             "finNote": html.escape(r["finished_note"] or "") if unit else "",
             "set": sid, "part": r["part_order"], "plabel": r["label"] or "",
             "counted": bool(r["counted"]) if sid else True, "overlap": r["overlap_note"] or "",
+            "added": r["added_at"] or "",   # appended to an existing set as a new episode
         })
         if sid:
             st = sets.setdefault(sid, {"title": set_rows[sid]["title"], "note": set_rows[sid]["note"] or "",
-                                       "parts": [], "dur": 0, "views": 0, "likes": 0, "comments": 0})
+                                       "parts": [], "dur": 0, "views": 0, "likes": 0, "comments": 0, "newAt": ""})
+            st["newAt"] = max(st["newAt"], r["added_at"] or "")
             st["parts"].append((r["part_order"], r["video_id"]))
             if r["counted"]:
                 st["dur"] += r["duration_seconds"] or 0

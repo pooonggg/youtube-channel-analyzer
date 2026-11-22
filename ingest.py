@@ -504,6 +504,62 @@ def export_scoring(con, channel: str | None = None, limit: int | None = None,
     return out
 
 
+# ---------------------------------------------------------------- ตอนใหม่ของชุดที่มีคะแนนแล้ว
+# User 2026-11-23: a new episode does not re-score the whole set. Claude reads only the new part's comments,
+# keeps the score (adds one line to the reasons) or moves it when the new part clearly changes things
+# (audio broken, quality drops, the story is cut off / finally ends). A set that grew a lot is flagged for a
+# full re-score instead.
+REGROW_RATIO = 0.5
+
+
+def export_new_parts(con, max_comments: int = 60) -> tuple[Path | None, int]:
+    rows = con.execute("""SELECT p.set_id, p.video_id FROM set_parts p JOIN videos v USING (video_id)
+                          JOIN scores s ON s.video_id = p.set_id
+                          WHERE p.reviewed = 0 AND v.gone_at IS NULL AND v.comments_fetched_at IS NOT NULL
+                          ORDER BY p.set_id, p.part_order""").fetchall()
+    if not rows:
+        return None, 0
+    by_set: dict[str, list[str]] = OrderedDict()
+    for r in rows:
+        by_set.setdefault(r["set_id"], []).append(r["video_id"])
+    lines = ["# ตอนใหม่ของชุดที่มีคะแนนแล้ว — อ่านเฉพาะคอมเมนต์ตอนใหม่ ไม่ต้องให้คะแนนทั้งชุดใหม่",
+             "ตอบ `data/scores/newparts_<YYYYMMDD>.json` = `{\"set_id\": {\"note\": \"เพิ่มตอน 3 (วันที่): สั้นๆ\", "
+             "\"score\"?: ใส่เฉพาะเมื่อตอนใหม่เปลี่ยนภาพชัด, \"finished\"?: true/false, \"finished_note\"?}}` "
+             "→ `python ingest.py review-parts <file>`",
+             "ไม่มีปัญหา = คงคะแนน · เสียงพัง/คุณภาพตก/ตัดจบ = หัก · มีป้าย 'ควรให้คะแนนใหม่ทั้งชุด' = "
+             "`export-scoring --all --ids <set_id>` แล้ว import-scores แทน", ""]
+    for sid, new_ids in by_set.items():
+        sc = con.execute("SELECT score, reasons, finished FROM scores WHERE video_id = ?", (sid,)).fetchone()
+        parts = db.set_parts(con, sid)
+        old_h = sum(p["duration_seconds"] or 0 for p in parts if p["counted"] and p["video_id"] not in new_ids) / 3600
+        new_h = sum(p["duration_seconds"] or 0 for p in parts if p["counted"] and p["video_id"] in new_ids) / 3600
+        regrow = old_h > 0 and new_h / old_h > REGROW_RATIO
+        lines += [f"## ชุด {sid} คะแนนเดิม {sc['score']:.0f}" + (" · ติดป้ายจบแล้ว" if sc["finished"] else "")
+                  + (f" · ⚠️ ควรให้คะแนนใหม่ทั้งชุด (ยาวขึ้น {new_h:.1f}h จากเดิม {old_h:.1f}h)" if regrow else ""),
+                  f"เหตุผลเดิม: {(sc['reasons'] or '')[:300]}", *_set_header(con, sid)]
+        for vid in new_ids:
+            v = con.execute("SELECT v.*, c.title AS channel_title FROM videos v JOIN channels c USING (channel_id) "
+                            "WHERE v.video_id = ?", (vid,)).fetchone()
+            c_rows = con.execute("SELECT comment_id, parent_id, text, like_count FROM comments WHERE video_id = ? "
+                                 "ORDER BY published_at", (vid,)).fetchall()
+            body, noise = compact_comments(c_rows)
+            lines += [f"### ตอนใหม่ `{vid}` | {v['title']}", f"{_video_header(v, c_rows)} noise={noise}",
+                      comment_signals(c_rows), finish_signals(c_rows), *body[:max_comments], ""]
+    out = ROOT / "data" / "to_score" / f"{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_newparts.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines), encoding="utf-8")
+    return out, len(by_set)
+
+
+def review_parts(con, m: dict) -> int:
+    for sid, it in m.items():
+        db.review_new_parts(con, sid, it.get("note", ""), it.get("score"))
+        if "finished" in it:
+            db.set_finished(con, sid, it["finished"], it.get("finished_note"))
+    con.commit()
+    return len(m)
+
+
 def print_ranked(con, score: float | None = None, channel: str | None = None) -> None:
     where, args = [db.ELIGIBLE_SQL], []
     if score is not None:
@@ -686,6 +742,9 @@ def main() -> int:
     s = sub.add_parser("set-ties"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-sets"); s.add_argument("file", type=Path)
     s = sub.add_parser("remove-set"); s.add_argument("set_id")
+    s = sub.add_parser("add-part"); s.add_argument("set_id"); s.add_argument("video_id"); s.add_argument("label", nargs="?")
+    s = sub.add_parser("not-part"); s.add_argument("video_id"); s.add_argument("target")
+    s = sub.add_parser("review-parts"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-finished"); s.add_argument("file", type=Path)
     s = sub.add_parser("finish-verdicts"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-duplicate"); s.add_argument("video_id"); s.add_argument("of")
@@ -730,6 +789,29 @@ def main() -> int:
             return 1
         con.commit()
         print(f"บันทึกชุดตอน {len(groups)} ชุด")
+        return 0
+    if args.cmd == "add-part":
+        try:
+            db.append_set_part(con, args.set_id, args.video_id, args.label)
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 1
+        con.commit()
+        print(f"เพิ่ม {args.video_id} เข้าชุด {args.set_id} แล้ว (รอบหน้า update.py ดึงคอมเมนต์ให้)")
+        return 0
+    if args.cmd == "not-part":
+        db.mark_not_part(con, args.video_id, args.target)
+        con.commit()
+        print(f"จำไว้แล้ว: {args.video_id} ไม่ใช่ตอนของ {args.target} (จะไม่ถูกเสนออีก)")
+        return 0
+    if args.cmd == "review-parts":
+        try:
+            n = review_parts(con, json.loads(args.file.read_text(encoding="utf-8")))
+        except ValueError as e:
+            con.rollback()
+            print(e, file=sys.stderr)
+            return 1
+        print(f"ตรวจตอนใหม่แล้ว {n} ชุด")
         return 0
     if args.cmd == "remove-set":
         db.remove_set(con, args.set_id)
