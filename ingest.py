@@ -23,6 +23,8 @@
   python ingest.py set-finished <file.json>   {"video_id": {"finished": true|false|null, "note": "..."}}
                                        ป้าย "จบแล้ว" จากคอมเมนต์ (ไม่เกี่ยวกับคะแนน)
   python ingest.py finish-verdicts <file.json>   {"id": ["done"|"open"|"unsure", "เหตุผล"?]}
+  python ingest.py channel-verdicts <file.json>  new subscriptions: {"UC…": ["manga"|"other"|"unsure", "เหตุผล"?]}
+  python ingest.py screen-baseline               one-off: also screen channels the viewer followed before it was first seen
                                        ผลตรวจ "เรื่องจบจริง" จาก finish pack (done = เข้าคลังแม้ไม่ถึง 10 ชม.)
   python ingest.py set-duplicate <id> <of> [--clear]
                                        mark a re-upload Claude confirmed (kept across mark_duplicates)
@@ -694,6 +696,55 @@ def import_finish_verdicts(con, m: dict) -> dict[str, int]:
     return n
 
 
+CHANNEL_VERDICTS = ("manga", "other", "unsure")
+
+
+def export_channel_review(con) -> tuple[Path | None, int]:
+    """Sheet of new subscriptions that have long clips (sub_watch.status = 'review'): a few lines each so
+    Claude can tell a story-narration channel from music / live / podcast / lessons without more API calls."""
+    rows = con.execute("SELECT channel_id, title, sample FROM sub_watch WHERE status = 'review' "
+                       "ORDER BY first_seen_at").fetchall()
+    if not rows:
+        return None, 0
+    lines = []
+    for r in rows:
+        s = json.loads(r["sample"])
+        lines.append(f"{r['channel_id']} | {r['title']} | คลิป 1 ชม.+ {s['n_long']}/{s['n_recent']} คลิปล่าสุด"
+                     + (f" | {s['desc']}" if s.get("desc") else ""))
+        lines += [f"  {sec / 3600:.1f}h | {_short(views)} | {_norm(title)}" for title, sec, views in s["clips"]]
+    out = ROOT / "data" / "to_score" / f"{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_channels.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join([
+        "# ช่องที่ติดตามใหม่: เป็นช่องเล่าเรื่องยาวแบบในคลังไหม (ไม่ใช่ให้คะแนน)",
+        "manga = เล่าเรื่องมังงะ/มังฮวา/นิยาย/อนิเมะ หรือสรุปซีรีส์/หนังแบบคลิปยาว (เข้าคลัง ดึงย้อนหลัง 500 คลิป) · "
+        "other = เพลง/กล่อมนอน/ไลฟ์ย้อนหลัง/พอดแคสต์/ความรู้/เกม ฯลฯ · unsure = ไม่แน่ใจ (= ไม่เข้าคลัง)",
+        'ตอบ JSON {"UC…": ["manga", "เหตุผลสั้นๆ"], "UC…2": ["other", "เพลงกล่อมนอน"]} '
+        "→ python ingest.py channel-verdicts <file>", "", *lines, ""]), encoding="utf-8")
+    return out, len(rows)
+
+
+def import_channel_verdicts(con, m: dict) -> dict[str, int]:
+    """{"channel_id": ["manga"|"other"|"unsure", note?]}. manga -> copied into `channels` as a
+    subscription channel (the next update run pulls its newest 500 clips); the rest stay out."""
+    n = dict.fromkeys(CHANNEL_VERDICTS, 0)
+    for cid, val in m.items():
+        verdict, note = (val, None) if isinstance(val, str) else (val[0], val[1] if len(val) > 1 else None)
+        if verdict not in n:
+            raise ValueError(f"{cid}: ผลต้องเป็น manga/other/unsure ไม่ใช่ {verdict}")
+        r = con.execute("SELECT viewer_id, sample FROM sub_watch WHERE channel_id = ? AND status = 'review' "
+                        "ORDER BY first_seen_at DESC", (cid,)).fetchone()
+        if r is None:
+            raise ValueError(f"{cid}: ไม่อยู่ในรายการช่องที่รอตัดสิน")
+        con.execute("UPDATE sub_watch SET status = ?, note = ?, checked_at = ? WHERE viewer_id = ? AND channel_id = ?",
+                    (verdict, note, db.now_iso(), r["viewer_id"], cid))
+        if verdict == "manga":
+            db.upsert_channel(con, json.loads(r["sample"])["row"])
+            con.execute("UPDATE channels SET origin = 'subscription', subscribed = 1 WHERE channel_id = ?", (cid,))
+        n[verdict] += 1
+    con.commit()
+    return n
+
+
 SYNC_URL = "https://yt-library-status.ytlib-765e3f.workers.dev/status"
 
 
@@ -747,6 +798,8 @@ def main() -> int:
     s = sub.add_parser("review-parts"); s.add_argument("file", type=Path)
     s = sub.add_parser("set-finished"); s.add_argument("file", type=Path)
     s = sub.add_parser("finish-verdicts"); s.add_argument("file", type=Path)
+    s = sub.add_parser("channel-verdicts"); s.add_argument("file", type=Path)
+    sub.add_parser("screen-baseline")
     s = sub.add_parser("set-duplicate"); s.add_argument("video_id"); s.add_argument("of")
     s.add_argument("--clear", action="store_true")
     s = sub.add_parser("set-language"); s.add_argument("channel"); s.add_argument("language")
@@ -828,6 +881,17 @@ def main() -> int:
     if args.cmd == "finish-verdicts":
         n = import_finish_verdicts(con, json.loads(args.file.read_text(encoding="utf-8")))
         print(f"บันทึกผลตรวจเรื่องจบ {sum(n.values())} คลิป: " + " · ".join(f"{k} {v}" for k, v in n.items()))
+        return 0
+    if args.cmd == "channel-verdicts":
+        n = import_channel_verdicts(con, json.loads(args.file.read_text(encoding="utf-8")))
+        print(f"บันทึกผลตรวจช่อง {sum(n.values())} ช่อง: " + " · ".join(f"{k} {v}" for k, v in n.items())
+              + (" — ช่อง manga จะดึงคลิปในรอบ `python update.py` ถัดไป" if n["manga"] else ""))
+        return 0
+    if args.cmd == "screen-baseline":
+        # one-off: also screen the channels the viewing account already followed when it was first seen
+        cur = con.execute("UPDATE sub_watch SET status = 'pending' WHERE status = 'baseline' AND channel_id != '-'")
+        con.commit()
+        print(f"ช่องเดิมของบัญชีดู {cur.rowcount} ช่อง จะถูกตรวจในรอบอัปเดตถัดไป (รอบละไม่เกิน 200 ช่อง ช่องละ 2 units)")
         return 0
     if args.cmd in ("import-status", "pull-status"):
         m = fetch_remote_status() if args.cmd == "pull-status" else json.loads(args.file.read_text(encoding="utf-8"))

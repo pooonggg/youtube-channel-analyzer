@@ -8,10 +8,14 @@
 Steps of a full run:
   0 preflight   API key, viewing-account id, lock file (no two runs at once), git state
   1 statuses    copy the website's watched/interested/not-interested clicks into the DB
-  2 channels    the viewing account's public subscriptions + channels added by hand
+  2 channels    the viewing account's public subscriptions + channels added by hand. A subscription that is
+                not a library channel goes to sub_watch: on the first run for a viewer all of them are
+                remembered as 'baseline' (ignored); later ones are 'pending' until screened
   3 new clips   per channel, oldest-checked first; the quota left is checked before each channel
                 (every FULL_SCAN_DAYS a channel's whole uploads list is walked, not only the newest page)
   4 views       refresh views of every clip (the view bar rises with a clip's age)
+  4b screen     pending subscriptions: newest 50 clips (2 units) -> no clip of SCREEN_MIN_SECONDS = 'no_long',
+                else data/to_score/<time>_channels.md for Claude (manga / other / unsure)
   5 duplicates  new episodes of a set already in the library are appended (any length / views) or listed;
                 exact re-uploads are hidden; look-alike titles are listed for Claude to decide,
                 and so are same-channel clips that look like parts of one story (ชุดตอน candidates)
@@ -53,6 +57,9 @@ NEW_CHANNEL_MAX_VIDEOS = 500   # first visit of a channel: newest 500 clips (~20
 LOCK_STALE_SECONDS = 6 * 3600
 FULL_SCAN_DAYS = 30            # walk a channel's whole uploads list once a month (~1 unit per 50 clips)
 FINISH_SAMPLE_PER_RUN = 1000   # finish check: at most this many 1-unit comment samples per run
+SCREEN_MIN_SECONDS = 3600      # a new subscription is shown to Claude only if one of its newest 50 clips is 1 h+
+SCREEN_PER_RUN = 200           # at most this many new subscriptions looked at per run (2 units each)
+SCREEN_RECHECK_DAYS = 30       # 'no_long' channels are looked at again after this many days
 
 
 class QuotaLow(Exception):
@@ -69,6 +76,7 @@ class Run:
         self.sections: list[tuple[str, list[str]]] = []
         self.pack: Path | None = None
         self.finish_pack: Path | None = None
+        self.channel_pack: Path | None = None
 
     def log(self, msg: str) -> None:
         print(msg, flush=True)
@@ -100,6 +108,10 @@ class Run:
             md += ["## คำเตือน", *[f"- {w}" for w in self.warnings], ""]
         for title, lines in self.sections:
             md += [f"## {title}", *(lines or ["- ไม่มี"]), ""]
+        if self.channel_pack:
+            md += ["## ช่องที่ติดตามใหม่ รอตัดสินว่าเป็นช่องมังงะไหม",
+                   f"- อ่าน `{self.channel_pack.relative_to(ROOT).as_posix()}` ตอบ manga/other/unsure → "
+                   "`python ingest.py channel-verdicts <file>` (ช่อง manga จะดึงคลิปในรอบอัปเดตถัดไป)", ""]
         if self.finish_pack:
             md += ["## ตรวจเรื่องจบ (ทำก่อนให้คะแนน)",
                    f"- อ่าน `{self.finish_pack.relative_to(ROOT).as_posix()}` (บรรทัดสั้นๆ) ตอบ done/open/unsure → "
@@ -118,6 +130,7 @@ class Run:
             "errors": self.errors, "warnings": self.warnings, "units": yt_api.units_used,
             "pack": self.pack.relative_to(ROOT).as_posix() if self.pack else None,
             "finish_pack": self.finish_pack.relative_to(ROOT).as_posix() if self.finish_pack else None,
+            "channel_pack": self.channel_pack.relative_to(ROOT).as_posix() if self.channel_pack else None,
             "report": out.relative_to(ROOT).as_posix()}, ensure_ascii=False, indent=1), encoding="utf-8")
         return out
 
@@ -194,14 +207,16 @@ def step_pull_status(con, run: Run) -> bool:
         return False
 
 
-def step_channels(con, yt, run: Run) -> None:
+def step_channels(con, yt, run: Run) -> tuple[str, set[str]] | None:
+    """Returns (viewer id, its current subscriptions) when the list could be read, else None."""
     viewer = load_secret("VIEWER_CHANNEL_ID")
     lines: list[str] = []
+    result = None
     if not viewer:
         run.warn("ไม่พบ VIEWER_CHANNEL_ID ใน .streamlit/secrets.toml — ใช้เฉพาะช่องที่มีอยู่แล้ว")
     else:
         try:
-            ensure_budget(con, 10, "ดึงรายชื่อช่องที่ติดตาม")
+            ensure_budget(con, 30, "ดึงรายชื่อช่องที่ติดตาม")
             subs = yt_api.fetch_subscriptions(yt, viewer)
         except HttpError as e:
             reason = yt_api.error_reason(e)
@@ -211,25 +226,90 @@ def step_channels(con, yt, run: Run) -> None:
             subs = None
         if subs is not None:
             sub_ids = {s["channel_id"] for s in subs}
+            titles = {s["channel_id"]: s["title"] for s in subs}
             known = {r["channel_id"]: r for r in con.execute("SELECT channel_id, title, origin, subscribed FROM channels")}
-            new_ids = [i for i in sub_ids if i not in known]
-            for ch in yt_api.fetch_channels(yt, new_ids):
-                row = ingest._channel_row(ch)
-                row["last_fetched_at"] = None
-                db.upsert_channel(con, row)
-                con.execute("UPDATE channels SET origin = 'subscription' WHERE channel_id = ?", (ch["id"],))
-                lines.append(f"- ➕ ติดตามใหม่: {ch['snippet']['title']}")
             con.execute(f"UPDATE channels SET subscribed = CASE WHEN channel_id IN ({','.join('?' * len(sub_ids)) or 'NULL'}) "
                         "THEN 1 ELSE 0 END", list(sub_ids))
             for cid, r in known.items():
                 if r["subscribed"] == 1 and cid not in sub_ids:
                     note = "เลิกดึงคลิปใหม่ คะแนนเดิมยังอยู่" if r["origin"] == "subscription" else "ยังดึงต่อเพราะเป็นช่องที่เพิ่มเอง"
                     lines.append(f"- ➖ เลิกติดตาม: {r['title']} ({note})")
+            lines += watch_new_subscriptions(con, viewer, sub_ids - set(known), titles)
             con.commit()
-            run.log(f"[2] ช่องที่บัญชีดูติดตาม {len(sub_ids)} ช่อง · ใหม่ {len(new_ids)} · {quota_note(con)}")
+            run.log(f"[2] ช่องที่บัญชีดูติดตาม {len(sub_ids)} ช่อง · {quota_note(con)}")
+            result = (viewer, sub_ids)
     n = con.execute(f"SELECT COUNT(*) FROM channels c WHERE {db.TRACKED_CHANNELS_SQL}").fetchone()[0]
-    lines.append(f"- ช่องที่ดึงคลิปใหม่รอบนี้: {n} ช่อง (ติดตามอยู่ + ช่องที่เพิ่มเอง)")
+    lines.append(f"- ช่องที่ดึงคลิปใหม่รอบนี้: {n} ช่อง (ช่องในคลัง)")
     run.section("ช่อง", lines)
+    return result
+
+
+def watch_new_subscriptions(con, viewer: str, outside: set[str], titles: dict[str, str]) -> list[str]:
+    """Subscriptions that are not library channels. First run for this viewer: remember them all as
+    'baseline' (never screened — user 2026-11-27: count only channels followed from now on).
+    Later: new ones become 'pending' for step_screen."""
+    seen = {r[0] for r in con.execute("SELECT channel_id FROM sub_watch WHERE viewer_id = ?", (viewer,))}
+    first = not seen
+    fresh = sorted(outside - seen)
+    rows = [(viewer, c, titles.get(c), "baseline" if first else "pending", db.now_iso()) for c in fresh]
+    if first and not rows:
+        rows = [(viewer, "-", "(จุดเริ่มนับ)", "baseline", db.now_iso())]   # so the next run is not "first" again
+    con.executemany("INSERT INTO sub_watch (viewer_id, channel_id, title, status, first_seen_at) VALUES (?, ?, ?, ?, ?)",
+                    rows)
+    if first:
+        return [f"- 📌 บัญชีดูนี้ตรวจครั้งแรก: จำช่องที่ติดตามอยู่แล้ว {len(fresh)} ช่องไว้ ไม่นำเข้าคลัง "
+                "(ต่อไปนับเฉพาะช่องที่ติดตามหลังจากนี้)"]
+    return [f"- ➕ ติดตามใหม่ รอตรวจว่าเป็นช่องมังงะไหม: {titles.get(c) or c}" for c in fresh]
+
+
+def step_screen(con, yt, run: Run, viewer: str, sub_ids: set[str]) -> None:
+    """Cheap rule gate for new subscriptions, then a short sheet for Claude (see db.sub_watch)."""
+    rows = [r for r in con.execute(f"""
+        SELECT channel_id, title FROM sub_watch WHERE viewer_id = ?
+          AND (status = 'pending' OR (status = 'no_long'
+               AND julianday('now') - julianday(checked_at) > {SCREEN_RECHECK_DAYS}))
+        ORDER BY first_seen_at""", (viewer,)) if r["channel_id"] in sub_ids][:SCREEN_PER_RUN]
+    n_long = n_none = 0
+    if rows:
+        ensure_budget(con, math.ceil(len(rows) / 50), "ดูข้อมูลช่องที่ติดตามใหม่")
+        chans = {ch["id"]: ch for ch in yt_api.fetch_channels(yt, [r["channel_id"] for r in rows])}
+        for r in rows:
+            cid, ch = r["channel_id"], chans.get(r["channel_id"])
+            if ch is None:
+                con.execute("UPDATE sub_watch SET status = 'other', note = 'ไม่พบช่อง (ปิดหรือถูกลบ)', checked_at = ? "
+                            "WHERE viewer_id = ? AND channel_id = ?", (db.now_iso(), viewer, cid))
+                continue
+            ensure_budget(con, 2, f"ดูคลิปล่าสุดของช่อง {ch['snippet']['title']}")
+            try:
+                playlist = ch["contentDetails"]["relatedPlaylists"]["uploads"]
+                vids = yt_api.fetch_videos(yt, yt_api.fetch_new_video_ids(yt, playlist, set(), 50))
+            except HttpError as e:
+                reason = yt_api.error_reason(e)
+                if reason == "quotaExceeded":
+                    raise
+                run.warn(f"ตรวจช่อง {ch['snippet']['title']}: {yt_api.ERROR_TH.get(reason, reason)} — รอบหน้าลองใหม่")
+                continue
+            long_ = sorted((v for v in vids if (v["duration_seconds"] or 0) >= SCREEN_MIN_SECONDS),
+                           key=lambda v: -(v["view_count"] or 0))
+            if not long_:
+                con.execute("UPDATE sub_watch SET status = 'no_long', checked_at = ?, title = ? "
+                            "WHERE viewer_id = ? AND channel_id = ?", (db.now_iso(), ch["snippet"]["title"], viewer, cid))
+                n_none += 1
+                continue
+            sample = {"row": {**ingest._channel_row(ch), "last_fetched_at": None},
+                      "desc": " ".join((ch["snippet"].get("description") or "").split())[:150],
+                      "n_recent": len(vids), "n_long": len(long_),
+                      "clips": [[v["title"][:90], v["duration_seconds"], v["view_count"]] for v in long_[:8]]}
+            con.execute("UPDATE sub_watch SET status = 'review', checked_at = ?, title = ?, sample = ? "
+                        "WHERE viewer_id = ? AND channel_id = ?",
+                        (db.now_iso(), ch["snippet"]["title"], json.dumps(sample, ensure_ascii=False), viewer, cid))
+            n_long += 1
+        con.commit()
+        run.log(f"[4b] ตรวจช่องที่ติดตามใหม่ {len(rows)} ช่อง · มีคลิปยาว {n_long} · ไม่มีคลิปยาว {n_none} · {quota_note(con)}")
+    run.channel_pack, n_review = ingest.export_channel_review(con)
+    if rows or n_review:
+        run.section("ช่องที่ติดตามใหม่", [f"- ตรวจรอบนี้ {len(rows)} ช่อง: ไม่มีคลิปยาว 1 ชม.+ {n_none} ช่อง (ไม่นำเข้า ตรวจใหม่ทุก "
+                                         f"{SCREEN_RECHECK_DAYS} วัน) · รอ Claude ตัดสิน {n_review} ช่อง"])
 
 
 def step_new_clips(con, yt, run: Run, new_channel_max: int) -> None:
@@ -634,9 +714,11 @@ def full_run(con, run: Run, publish: bool, new_channel_max: int) -> None:
     alikes: list[str] = []
     quota_stop = False
     try:
-        step_channels(con, yt, run)
+        subs = step_channels(con, yt, run)
         step_new_clips(con, yt, run, new_channel_max)
         step_refresh(con, yt, run)
+        if subs:
+            step_screen(con, yt, run, *subs)
     except (QuotaLow, HttpError) as e:
         quota_stop = True
         msg = str(e) if isinstance(e, QuotaLow) else yt_api.error_message_th(e)

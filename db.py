@@ -9,6 +9,7 @@ Tables
   quota_log    API units spent per Pacific-time day
   sets         one story uploaded in several parts by ONE channel (ชุดตอน) — scored as one unit
   set_parts    the clips of a set, in story order; counted = 0 when another part already covers it
+  sub_watch    subscriptions of the viewing account that are not library channels (baseline / screening)
 """
 from __future__ import annotations
 
@@ -110,6 +111,25 @@ CREATE TABLE IF NOT EXISTS not_parts (
     target      TEXT NOT NULL,
     decided_at  TEXT NOT NULL,
     PRIMARY KEY (video_id, target)
+);
+-- Channels the viewing account subscribes to that are NOT in `channels` (user 2026-11-27: the viewing
+-- account changed to the main account, which follows hundreds of non-manga channels). First sight of a
+-- viewer = 'baseline' (ignored). Later new subscriptions = 'pending' -> 2-unit look at the newest 50 clips:
+-- no clip >= update.SCREEN_MIN_SECONDS = 'no_long' (looked at again after SCREEN_RECHECK_DAYS) ·
+-- otherwise 'review' -> Claude reads data/to_score/<time>_channels.md and answers manga / other / unsure.
+-- 'manga' rows are copied into `channels` (origin 'subscription'); other/unsure stay out (unsure = no).
+-- sample = JSON {"row": channel row for `channels`, "desc", "clips": [[title, seconds, views], ...]}
+CREATE TABLE IF NOT EXISTS sub_watch (
+    viewer_id     TEXT NOT NULL,
+    channel_id    TEXT NOT NULL,
+    title         TEXT,
+    status        TEXT NOT NULL CHECK (status IN ('baseline', 'pending', 'no_long', 'review',
+                                                  'manga', 'other', 'unsure')),
+    first_seen_at TEXT NOT NULL,
+    checked_at    TEXT,
+    note          TEXT,
+    sample        TEXT,
+    PRIMARY KEY (viewer_id, channel_id)
 );
 """
 
